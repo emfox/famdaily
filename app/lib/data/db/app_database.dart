@@ -415,6 +415,12 @@ class AppDatabase extends _$AppDatabase {
     return row?.value;
   }
 
+  /// 删掉一个设置键。用于"关掉免打扰"这类要真正删掉而不是写个假值的场合。
+  Future<void> clearSetting(String key, {required int nowMs}) async {
+    await (delete(settings)..where((t) => t.key.equals(key))).go();
+    await _log('setting', key, 'delete', nowMs);
+  }
+
   Future<void> setSetting(String key, String value, {required int nowMs}) async {
     await into(settings).insertOnConflictUpdate(
       SettingsCompanion.insert(

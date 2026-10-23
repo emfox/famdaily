@@ -50,6 +50,7 @@ final class PlannedFilters {
     this.quietHours,
     this.remindersEnabled = true,
     this.followupDelayMinutes = 15,
+    this.followupEnabled = true,
   });
 
   /// 已完成/已"没做"/已补卡的槽位键，格式 `taskId|epochDay|index`。
@@ -65,6 +66,12 @@ final class PlannedFilters {
 
   /// 二次催办延迟（分钟）。需求里定的是 15 分钟。
   final int followupDelayMinutes;
+
+  /// 是否排二次催办。
+  ///
+  /// 单独一个开关而不是"把延迟设成 0"：0 分钟意味着"跟到点提醒同一时刻"，
+  /// 系统会在同一秒弹两条，用户看到的是重复通知而不是催办。
+  final bool followupEnabled;
 
   /// 槽位键（与 [Slot.key] 一致）。
   static String keyOf(String taskId, LocalDate date, int index) =>
@@ -123,6 +130,9 @@ abstract final class NotificationPlanner {
       //
       // 只给"当天还没结束"的槽位排催办会漏掉跨午夜的，所以这里不做日期判断，
       // 只按真实时刻加偏移。
+      if (!filters.followupEnabled) {
+        continue;
+      }
       final fu = _shiftMinutes(at, filters.followupDelayMinutes);
       final fuQuiet = _applyQuietHours(fu, quiet);
       // 免打扰把催办顺延到免打扰结束后，若顺延后已经过了**到点提醒**很久

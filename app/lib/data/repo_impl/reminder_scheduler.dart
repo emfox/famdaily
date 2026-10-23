@@ -28,6 +28,7 @@ abstract final class SettingsKeys {
   static const String quietStart = 'reminders.quietStart';
   static const String quietEnd = 'reminders.quietEnd';
   static const String followupMinutes = 'reminders.followupMinutes';
+  static const String followupEnabled = 'reminders.followupEnabled';
   static const String lastScheduledFor = 'reminders.lastScheduledFor';
 }
 
@@ -117,6 +118,8 @@ final class ReminderScheduler {
           await _db.getSetting(SettingsKeys.followupMinutes) ?? '',
         ) ??
         15;
+    final followupEnabled =
+        (await _db.getSetting(SettingsKeys.followupEnabled)) != 'false';
 
     if (!enabled) {
       await _notifications.cancelAll();
@@ -198,6 +201,7 @@ final class ReminderScheduler {
         quietHours: quiet,
         remindersEnabled: enabled,
         followupDelayMinutes: followupMinutes,
+        followupEnabled: followupEnabled,
       ),
     );
 

@@ -7,6 +7,7 @@ import '../../data/backup/backup_service.dart';
 import '../../data/repo_impl/reminder_scheduler.dart';
 import '../../domain/notification/window_policy.dart';
 import 'backup_page.dart';
+import 'reminder_settings_page.dart';
 
 /// 设置页。
 ///
@@ -46,6 +47,7 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _loading = true;
   bool _remindersOn = true;
   String? _backupHint;
+  ReminderSettings? _reminderSettings;
 
   @override
   void initState() {
@@ -58,14 +60,26 @@ class _SettingsPageState extends State<SettingsPage> {
     final raw = await db.getSetting(SettingsKeys.remindersEnabled);
     // 备份提示是**轻提示**：超过 30 天才出现一行小字，不弹窗、不加红点。
     final hint = await widget.backup?.reminderLine();
+    final reminders = await ReminderSettingsStore(db).load();
     if (!mounted) {
       return;
     }
     setState(() {
       _remindersOn = raw != 'false';
       _backupHint = hint;
+      _reminderSettings = reminders;
       _loading = false;
     });
+  }
+
+  /// 副标题：把"催不催、几点到几点别吵"压成一行，省一次点击。
+  String get _reminderSummary {
+    final r = _reminderSettings;
+    if (r == null) {
+      return '';
+    }
+    final fu = r.followupEnabled ? '再催 ${r.followupMinutes} 分钟' : '不催';
+    return r.quietEnabled ? '$fu · 安静 ${r.quietLabel}' : fu;
   }
 
   Future<void> _setReminders(bool on) async {
@@ -95,6 +109,22 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  Future<void> _openReminders() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => ReminderSettingsPage(
+          store: ReminderSettingsStore(widget.services.db),
+          reschedule: () async {
+            await widget.services.scheduler.reschedule(
+              trigger: RescheduleTrigger.settingsChanged,
+            );
+          },
+        ),
+      ),
+    );
+    await _load();
+  }
+
   Future<void> _openBackup() async {
     final backup = widget.backup;
     if (backup == null) {
@@ -119,12 +149,6 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  void _notReady(String what) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text('$what：下一步做')));
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -145,11 +169,12 @@ class _SettingsPageState extends State<SettingsPage> {
                   subtitle: const Text('关掉之后所有项目都不响，打卡照常'),
                 ),
                 ListTile(
-                  leading: const Icon(Icons.bedtime_outlined),
-                  title: const Text('免打扰'),
-                  subtitle: const Text('这段时间里的提醒会顺延到结束之后'),
+                  leading: const Icon(Icons.alarm_on_outlined),
+                  title: const Text('催一次 / 免打扰'),
+                  subtitle: Text(_reminderSummary),
                   trailing: const Icon(Icons.chevron_right, size: 18),
-                  onTap: () => _notReady('免打扰时段'),
+                  enabled: _remindersOn,
+                  onTap: _remindersOn ? () => unawaited(_openReminders()) : null,
                 ),
                 const Divider(height: 24),
 
