@@ -256,12 +256,17 @@ void main() {
     expect(dates, contains(domain.LocalDate(2025, 3, 10)));
   });
 
-  test('成员被删除后 member 为 null（页面显示「已删除的成员」）', () async {
+  test('成员被删除后 member 仍保留（名字是要留住的历史，不是最新状态）', () async {
+    // 曾经这里是 `isDeleted ? null : member`，界面上就只剩一句
+    // 「已删除的成员」——"这项是谁做的"直接没了。头像画不画是界面决策，
+    // 数据层没理由把名字扔掉。
     await db.insertTask(_task(), nowMs: _ts);
     await db.deleteMember('m1', nowMs: _ts);
 
     final detail = (await service(db).load('t1', at: _now))!;
-    expect(detail.member, isNull);
+    expect(detail.member, isNotNull);
+    expect(detail.member!.name, '爷爷');
+    expect(detail.member!.isDeleted, isTrue);
     expect(detail.task.name, '吃药');
   });
 

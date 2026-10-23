@@ -94,6 +94,19 @@ void main() {
       expect(row.deletedAtMs, isNotNull);
     });
 
+    test('listMembersIncludingDeleted 把已删的也算上，排序不变', () async {
+      await db.insertMember(_member('m2', '妈妈'), nowMs: _now);
+      await db.insertMember(_member('m3', '小明'), nowMs: _now);
+      await db.deleteMember('m2', nowMs: _now);
+
+      final all = await db.listMembersIncludingDeleted();
+
+      expect(all.map((m) => m.id), ['m1', 'm2', 'm3']);
+      expect(all.map((m) => m.name), ['我', '妈妈', '小明']);
+      expect(all[1].isDeleted, isTrue);
+      expect(all[0].isDeleted, isFalse);
+    });
+
     test('拖拽排序按传入顺序重写', () async {
       await db.insertMember(_member('m2', '妈妈'), nowMs: _now);
       await db.insertMember(_member('m3', '小明'), nowMs: _now);

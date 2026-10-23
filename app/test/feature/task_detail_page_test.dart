@@ -399,4 +399,16 @@ void main() {
     await tester.pumpAndSettle();
     expect(deleted, 't1');
   });
+
+  testInTime('成员删了，详情页仍写着他的名字，只是不画头像', (tester) async {
+    // 项目是"谁做"的，是这条历史里最该留住的信息。删掉成员后曾经只剩
+    // 一句「已删除的成员」——那个人做过什么，从此查不到了。
+    await db.insertTask(_task(), nowMs: _ts);
+    await db.deleteMember('m1', nowMs: _ts);
+    await pump(tester);
+
+    expect(find.text('爷爷'), findsOneWidget);
+    expect(find.text('已删除'), findsOneWidget);
+    expect(find.text('已删除的成员'), findsNothing);
+  });
 }

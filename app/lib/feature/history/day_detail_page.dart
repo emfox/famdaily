@@ -66,7 +66,11 @@ class _DayDetailPageState extends State<DayDetailPage> {
   Future<void> _load() async {
     final detail = await widget.service.loadDay(widget.date);
     final db = widget.db;
-    final members = db == null ? <Member>[] : await db.listMembers();
+    // **含已删除成员**。那天的记录还在，它属于谁不该因为"这个人后来被删了"
+    // 就变成一句「已删除的成员」——好几个人还会撞成同一句话。
+    final members = db == null
+        ? <Member>[]
+        : await db.listMembersIncludingDeleted();
     if (!mounted) {
       return;
     }
@@ -196,7 +200,9 @@ class _DayDetailPageState extends State<DayDetailPage> {
                     ),
                   ],
                   const SizedBox(height: 8),
-                  if (detail.isEmpty)
+                  // "一条都没记"跟"这天没安排"看起来一样，就给它一样的样子。
+                  // 只留一堆没人名的"没记"行去撑版面，用户反而以为出了错。
+                  if (detail.rows.every((r) => r.record == null))
                     _EmptyDay(date: detail.date)
                   else
                     ..._buildGroups(context, detail, memberMap),
@@ -222,28 +228,26 @@ class _DayDetailPageState extends State<DayDetailPage> {
     DayDetail detail,
     Map<String, Member> memberMap,
   ) {
-    final grouped = HistoryService.groupByMember(detail.rows);
+    // 分组口径：**只给"有交代"的行按成员分组**。
+    //
+    // 之前是所有人都分一组，包括那一堆"排过但一个字没记"的行。后果在
+    // 删掉成员之后才暴露：她过去每一天的"没记"照样在日历里占一个分组，
+    // 而成员表里查不到她（或她已删），整组就只剩一句「已删除的成员」——
+    // 用户看到的就是"统计项里人名全是已删除的成员"，可那根本不是统计。
+    //
+    // 现在：做过/没做过的（有 record）留人名，那才是历史的主体；
+    // 没记的归到末尾一堆「没记录」，不给它编一个人名。
+    final withRecord = <CheckinRow>[];
+    final withoutRecord = <CheckinRow>[];
+    for (final r in detail.rows) {
+      (r.record != null ? withRecord : withoutRecord).add(r);
+    }
+
     final widgets = <Widget>[];
     // 按成员出现顺序（service 已按成员排序过行）。
-    for (final entry in grouped.entries) {
+    for (final entry in HistoryService.groupByMember(withRecord).entries) {
       final member = memberMap[entry.key];
-      widgets.add(
-        Padding(
-          padding: const EdgeInsets.fromLTRB(4, 14, 4, 8),
-          child: Row(
-            children: [
-              if (member != null) ...[
-                MemberAvatar(member: member, size: 22),
-                const SizedBox(width: 8),
-              ],
-              Text(
-                member?.name ?? '已删除的成员',
-                style: Theme.of(context).textTheme.labelLarge,
-              ),
-            ],
-          ),
-        ),
-      );
+      widgets.add(_GroupHeader(member: member));
       for (final row in entry.value) {
         widgets.add(
           Padding(
@@ -257,7 +261,77 @@ class _DayDetailPageState extends State<DayDetailPage> {
         );
       }
     }
+
+    if (withoutRecord.isNotEmpty) {
+      widgets.add(const _GroupHeader(member: null, title: '没记录'));
+      for (final row in withoutRecord) {
+        widgets.add(
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: _HistoryTile(
+              row: row,
+              detail: detail,
+              onTap: () => unawaited(_onTapRow(row)),
+            ),
+          ),
+        );
+      }
+    }
     return widgets;
+  }
+}
+
+/// 分组的标题行：头像 + 名字（+ 已删除标注）。
+///
+/// [member] 为 null 有两种情况，靠 [title] 区分：
+/// - [title] 给了 → 这是一个不带人名的中性分组（如「没记录」）；
+/// - [title] 没给 → 记录还在、但成员表里查不到这个人（早期数据/同步边界）。
+class _GroupHeader extends StatelessWidget {
+  const _GroupHeader({required this.member, this.title});
+
+  final Member? member;
+  final String? title;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final m = member;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 14, 4, 8),
+      child: Row(
+        children: [
+          // 已删除的成员不画头像：画出来等于暗示"还在用"。
+          // 但名字要留——"那天是谁做的"是历史里最该留住的信息。
+          if (m != null && !m.isDeleted) ...[
+            MemberAvatar(member: m, size: 22),
+            const SizedBox(width: 8),
+          ],
+          Flexible(
+            child: Text(
+              title ?? m?.name ?? '不认识的成员',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: title != null
+                  ? theme.textTheme.labelLarge?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    )
+                  : theme.textTheme.labelLarge,
+            ),
+          ),
+          // 名字后面挂个低调的标注：既留住了是谁，也不假装他还活跃。
+          if (m?.isDeleted ?? false) ...[
+            const SizedBox(width: 6),
+            Text(
+              '已删除',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 }
 
@@ -526,7 +600,9 @@ class _EmptyDay extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           Text(
-            '这天没有安排',
+            // 排过但一条没记，和"根本没排"从结果上看是一回事，
+            // 说"没安排"会跟事实打架，用一句两头都成立的话。
+            '这天没有打卡记录',
             style: theme.textTheme.bodyMedium?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,
             ),

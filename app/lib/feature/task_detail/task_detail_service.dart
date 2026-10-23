@@ -209,8 +209,11 @@ final class TaskDetailService {
 
     return TaskDetail(
       task: task,
-      // 成员被软删了就不画头像——画出来等于暗示"还在用"。
-      member: (member == null || member.isDeleted) ? null : member,
+      // 成员被软删了也要把对象留着。曾经这里是 `isDeleted ? null : member`，
+      // 结果界面上只剩一句「已删的成员」——项目是**谁做**的这条信息就没了，
+      // 而它恰恰是历史记录里最该留住的东西。头像画不画由界面决定
+      // （见 task_detail_page），别在数据层就把人名删掉。
+      member: member,
       stats: summary,
       days: days,
       today: today,

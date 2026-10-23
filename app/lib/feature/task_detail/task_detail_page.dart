@@ -287,13 +287,15 @@ class _Header extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  if (member != null) ...[
+                  // 已删除的成员不画头像：画出来等于暗示"还在用"。
+                  // 但名字要留——"这项是谁做的"是历史里最该留住的信息。
+                  if (member != null && !member.isDeleted) ...[
                     MemberAvatar(member: member, size: 20),
                     const SizedBox(width: 6),
                   ],
                   Flexible(
                     child: Text(
-                      member?.name ?? '已删除的成员',
+                      member?.name ?? '不认识的成员',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.labelLarge?.copyWith(
@@ -301,6 +303,15 @@ class _Header extends StatelessWidget {
                       ),
                     ),
                   ),
+                  if (member?.isDeleted ?? false) ...[
+                    const SizedBox(width: 4),
+                    Text(
+                      '已删除',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
                   const SizedBox(width: 6),
                   _StatusChip(task: task),
                 ],

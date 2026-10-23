@@ -107,6 +107,20 @@ class AppDatabase extends _$AppDatabase {
     return row == null ? null : Mappers.memberFromRow(row);
   }
 
+  /// 全部成员，**包括已软删除的**。
+  ///
+  /// 历史页要用：删掉的成员，他之前那些打卡记录还在日历里，那段历史
+  /// 上得有个名字。只查未删除的，就只能显示一句「已删除的成员」——
+  /// 而且好几个人会撞成同一句话，等于把历史信息抹掉了。
+  ///
+  /// 只读展示用，任何时候都别拿它去填充"可选成员"列表。
+  Future<List<domain.Member>> listMembersIncludingDeleted() async {
+    final rows = await (select(members)
+          ..orderBy([(t) => OrderingTerm(expression: t.sortOrder)]))
+        .get();
+    return rows.map<domain.Member>(Mappers.memberFromRow).toList();
+  }
+
   /// 新增成员，排序自动追加到末尾。
   Future<void> insertMember(domain.Member m, {required int nowMs}) async {
     await transaction(() async {
