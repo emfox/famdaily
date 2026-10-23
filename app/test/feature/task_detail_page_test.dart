@@ -291,4 +291,112 @@ void main() {
 
     expect(find.textContaining('只列最近 30 天'), findsOneWidget);
   });
+
+  testInTime('底部三个动作：暂停 / 归档 / 删除', (tester) async {
+    await db.insertTask(_task(), nowMs: _ts);
+    await tester.pumpWidget(
+      _wrap(
+        TaskDetailPage(
+          service: TaskDetailService(db),
+          taskId: 't1',
+          onStatusChange: (_, _) async {},
+          onDelete: (_) async {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('暂停这项'), findsOneWidget);
+    expect(find.text('归档'), findsOneWidget);
+    expect(find.text('删除'), findsOneWidget);
+    // 三条的说明文案必须不一样——用户靠这几行区分语义
+    expect(find.textContaining('随时恢复'), findsOneWidget);
+    expect(find.textContaining('疗程结束就收起来'), findsOneWidget);
+    expect(find.textContaining('不能再改'), findsOneWidget);
+  });
+
+  testInTime('没给回调时底部不出现这三项（只读场景）', (tester) async {
+    await db.insertTask(_task(), nowMs: _ts);
+    await pump(tester);
+
+    expect(find.text('暂停这项'), findsNothing);
+    expect(find.text('归档'), findsNothing);
+  });
+
+  testInTime('已暂停时按钮变成「恢复这项」，不再是「暂停这项」', (tester) async {
+    await db.insertTask(
+      _task().copyWith(status: domain.TaskStatus.paused),
+      nowMs: _ts,
+    );
+    await tester.pumpWidget(
+      _wrap(
+        TaskDetailPage(
+          service: TaskDetailService(db),
+          taskId: 't1',
+          onStatusChange: (_, _) async {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('恢复这项'), findsOneWidget);
+    expect(find.text('暂停这项'), findsNothing);
+  });
+
+  testInTime('已归档时按钮变成「再来一轮」', (tester) async {
+    await db.insertTask(
+      _task().copyWith(status: domain.TaskStatus.archived),
+      nowMs: _ts,
+    );
+    await tester.pumpWidget(
+      _wrap(
+        TaskDetailPage(
+          service: TaskDetailService(db),
+          taskId: 't1',
+          onStatusChange: (_, _) async {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('再来一轮'), findsOneWidget);
+  });
+
+  testInTime('点「暂停这项」把目标状态交出去', (tester) async {
+    await db.insertTask(_task(), nowMs: _ts);
+    domain.TaskStatus? got;
+    await tester.pumpWidget(
+      _wrap(
+        TaskDetailPage(
+          service: TaskDetailService(db),
+          taskId: 't1',
+          onStatusChange: (_, s) async => got = s,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('暂停这项'));
+    await tester.pumpAndSettle();
+    expect(got, domain.TaskStatus.paused);
+  });
+
+  testInTime('点「删除」把项目交出去（确认框由调用方负责）', (tester) async {
+    await db.insertTask(_task(), nowMs: _ts);
+    String? deleted;
+    await tester.pumpWidget(
+      _wrap(
+        TaskDetailPage(
+          service: TaskDetailService(db),
+          taskId: 't1',
+          onDelete: (t) async => deleted = t.id,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('删除'));
+    await tester.pumpAndSettle();
+    expect(deleted, 't1');
+  });
 }

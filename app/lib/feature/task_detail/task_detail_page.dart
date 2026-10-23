@@ -26,6 +26,8 @@ class TaskDetailPage extends StatefulWidget {
     this.onEdit,
     this.onOpenPhoto,
     this.store,
+    this.onStatusChange,
+    this.onDelete,
     super.key,
   });
 
@@ -43,6 +45,12 @@ class TaskDetailPage extends StatefulWidget {
 
   /// 照片仓库（把相对路径换成可读路径）。null 时缩略图只显示占位。
   final PhotoStore? store;
+
+  /// 暂停/恢复/归档（ui-spec §4.1）。null 时底部不出现这几项。
+  final Future<void> Function(Task task, TaskStatus status)? onStatusChange;
+
+  /// 删除。null 时底部不出现「删除」。
+  final Future<void> Function(Task task)? onDelete;
 
   @override
   State<TaskDetailPage> createState() => _TaskDetailPageState();
@@ -150,6 +158,15 @@ class _TaskDetailPageState extends State<TaskDetailPage> {
                 color: theme.colorScheme.outline,
               ),
             ),
+            if (widget.onStatusChange != null || widget.onDelete != null) ...[
+              const SizedBox(height: 24),
+              const Divider(),
+              _Actions(
+                task: detail.task,
+                onStatusChange: widget.onStatusChange,
+                onDelete: widget.onDelete,
+              ),
+            ],
           ],
         ),
       ),
@@ -168,6 +185,79 @@ class _TaskDetailPageState extends State<TaskDetailPage> {
           builder: (_) => _PhotoViewer(path: path, title: detail.task.name),
         ),
       ),
+    );
+  }
+}
+
+/// 底部三个动作：暂停/恢复、归档、删除（ui-spec §4.1）。
+///
+/// **这三条语义必须严格区分，实现时不要合并**：
+///
+/// | 操作 | 提醒 | 今日清单 | 记录 | 可恢复 |
+/// |---|---|---|---|---|
+/// | 暂停 | 停 | 不出现 | 保留 | 随时恢复 |
+/// | 归档 | 停 | 不出现 | 保留 | 需「再来一轮」 |
+/// | 删除 | 停 | 不出现 | **保留** | 不可 |
+///
+/// 所以这里给的是三个不同的动词、三种不同的确认文案，而不是一个
+/// "关掉它"的开关加一个垃圾桶。用户分不清这三者的后果是：
+/// 想暂停一个疗程结果删了，30 天记录再也点不回去。
+class _Actions extends StatelessWidget {
+  const _Actions({
+    required this.task,
+    required this.onStatusChange,
+    required this.onDelete,
+  });
+
+  final Task task;
+  final Future<void> Function(Task task, TaskStatus status)? onStatusChange;
+  final Future<void> Function(Task task)? onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final paused = task.status == TaskStatus.paused;
+    final archived = task.status == TaskStatus.archived;
+
+    return Column(
+      children: [
+        if (onStatusChange != null) ...[
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(
+              paused ? Icons.play_circle_outline : Icons.pause_circle_outline,
+              color: scheme.primary,
+            ),
+            title: Text(paused ? '恢复这项' : '暂停这项'),
+            subtitle: Text(paused ? '重新出现在今日清单里' : '出门旅行时用 · 记录保留，随时恢复'),
+            onTap: () => onStatusChange!(
+              task,
+              paused ? TaskStatus.active : TaskStatus.paused,
+            ),
+          ),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(
+              archived ? Icons.unarchive_outlined : Icons.inventory_2_outlined,
+              color: scheme.primary,
+            ),
+            title: Text(archived ? '再来一轮' : '归档'),
+            subtitle: Text(archived ? '按原来的规则重新开始' : '疗程结束就收起来 · 记录保留'),
+            onTap: () => onStatusChange!(
+              task,
+              archived ? TaskStatus.active : TaskStatus.archived,
+            ),
+          ),
+        ],
+        if (onDelete != null)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.delete_outline, color: scheme.error),
+            title: Text('删除', style: TextStyle(color: scheme.error)),
+            subtitle: const Text('从清单里去掉 · 日历里的记录还在，但不能再改'),
+            onTap: () => onDelete!(task),
+          ),
+      ],
     );
   }
 }
@@ -394,11 +484,7 @@ class _DayGroup extends StatelessWidget {
         for (final e in day.entries)
           Padding(
             padding: const EdgeInsets.only(bottom: 6),
-            child: _RecordRow(
-              entry: e,
-              store: store,
-              onOpenPhoto: onOpenPhoto,
-            ),
+            child: _RecordRow(entry: e, store: store, onOpenPhoto: onOpenPhoto),
           ),
       ],
     );
@@ -508,7 +594,11 @@ class _RecordRow extends StatelessWidget {
 /// 解析不到就画占位而不是崩：照片可能被用户从系统相册清理掉了，
 /// 也可能这份数据是从没带照片的备份恢复来的——两种情况记录本身都还有效。
 class _Thumb extends StatefulWidget {
-  const _Thumb({required this.relativePath, required this.store, required this.onTap});
+  const _Thumb({
+    required this.relativePath,
+    required this.store,
+    required this.onTap,
+  });
 
   final String relativePath;
   final PhotoStore? store;

@@ -35,8 +35,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen>
-    with WidgetsBindingObserver {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   late final TodayService _service = TodayService(widget.services.db);
   late final TaskDetailService _detail = TaskDetailService(widget.services.db);
 
@@ -73,9 +72,7 @@ class _HomeScreenState extends State<HomeScreen>
     }
     _lastKnownDay = today;
     unawaited(
-      widget.services.scheduler.reschedule(
-        trigger: RescheduleTrigger.resumed,
-      ),
+      widget.services.scheduler.reschedule(trigger: RescheduleTrigger.resumed),
     );
     unawaited(_load());
   }
@@ -86,9 +83,7 @@ class _HomeScreenState extends State<HomeScreen>
     if (!mounted || raw == null) {
       return;
     }
-    final parsed = HomeLayout.values
-        .where((e) => e.name == raw)
-        .firstOrNull;
+    final parsed = HomeLayout.values.where((e) => e.name == raw).firstOrNull;
     if (parsed != null) {
       setState(() => _layout = parsed);
     }
@@ -145,9 +140,7 @@ class _HomeScreenState extends State<HomeScreen>
 
     final today = _view.date ?? LocalDate.fromDateTime(clock.now());
     final now = _view.now;
-    final visual = now == null
-        ? CheckinVisual.pending
-        : row.visual(today, now);
+    final visual = now == null ? CheckinVisual.pending : row.visual(today, now);
 
     switch (visual) {
       case CheckinVisual.doneOnTime:
@@ -294,12 +287,74 @@ class _HomeScreenState extends State<HomeScreen>
           taskId: taskId,
           store: widget.services.photoStore,
           onEdit: (task) => unawaited(_editTask(task)),
+          onStatusChange: (task, status) => _setStatus(task, status),
+          onDelete: _confirmDelete,
         ),
       ),
     );
     if (mounted) {
       await _afterChange();
     }
+  }
+
+  /// 暂停 / 恢复 / 归档（ui-spec §4.1）。
+  ///
+  /// 三个动作都**不碰记录**，只是改"以后还生不生成待办"。所以不需要
+  /// 二次确认——它们都是可逆的。真正不可逆的只有删除。
+  Future<void> _setStatus(Task task, TaskStatus status) async {
+    final nowMs = clock.now().millisecondsSinceEpoch;
+    await widget.services.db.setTaskStatus(task.id, status, nowMs: nowMs);
+    await _afterChange();
+    if (!mounted) {
+      return;
+    }
+    _toast(switch (status) {
+      TaskStatus.active => '「${task.name}」已经恢复',
+      TaskStatus.paused => '「${task.name}」暂停了，记录都还在',
+      TaskStatus.archived => '「${task.name}」归档了',
+      _ => '已更新',
+    });
+  }
+
+  /// 删除项目。**必须确认**：这是三者里唯一不可撤销的。
+  ///
+  /// 文案要说清"记录还在"——用户最怕的是删掉项目连孩子上个月的打卡
+  /// 都一起没了。这里的事实是：日历里还能看到那天做过这件事。
+  Future<void> _confirmDelete(Task task) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('删除「${task.name}」？'),
+        content: const Text(
+          '它不会再出现在今日清单里。\n'
+          '已经打过的卡还留在日历里，翻回去能看到，只是不能再改。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('再想想'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) {
+      return;
+    }
+    await widget.services.db.deleteTask(
+      task.id,
+      nowMs: clock.now().millisecondsSinceEpoch,
+    );
+    await _afterChange();
+    if (!mounted) {
+      return;
+    }
+    // 项目没了，详情页再停着就是空壳：退出去。
+    Navigator.of(context).pop();
+    _toast('「${task.name}」删掉了，记录还在日历里');
   }
 
   Future<void> _editTask(Task task) async {
@@ -312,11 +367,8 @@ class _HomeScreenState extends State<HomeScreen>
     // 该拿它去写库，而写库已经在 onSave 里发生过了。
     final saved = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
-        builder: (_) => TaskEditPage.edit(
-          task: task,
-          members: _members,
-          onSave: _saveTask,
-        ),
+        builder: (_) =>
+            TaskEditPage.edit(task: task, members: _members, onSave: _saveTask),
       ),
     );
     if (saved != true || !mounted) {
@@ -333,10 +385,7 @@ class _HomeScreenState extends State<HomeScreen>
     }
     final created = await Navigator.of(context).push<Task>(
       MaterialPageRoute(
-        builder: (_) => TaskEditPage(
-          members: _members,
-          onSave: _saveTask,
-        ),
+        builder: (_) => TaskEditPage(members: _members, onSave: _saveTask),
       ),
     );
     if (created == null || !mounted) {
