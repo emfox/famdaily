@@ -14,12 +14,14 @@ ScheduleSpec spec({
   TimeRule? time,
   Course course = Course.none,
   bool enabled = true,
+  LocalDate? fromDateOverride,
 }) => ScheduleSpec(
   taskId: id,
   repeat: repeat,
   time: time ?? FixedTimesRule([LocalTime(20, 0)]),
   course: course,
   enabled: enabled,
+  fromDate: fromDateOverride,
 );
 
 void main() {
@@ -297,6 +299,73 @@ void main() {
         Scheduler.estimateDailyCount([s], from: monday, sampleDays: 7),
         1,
       );
+    });
+  });
+
+  group('规则生效日（改规则不影响历史的实现基础）', () {
+    test('fromDate 之前的日期不产出槽位', () {
+      final r = Scheduler.expand(
+        specs: [spec(fromDateOverride: monday.addDays(3))],
+        from: monday,
+        to: monday.addDays(5),
+      );
+      // 只在第 4/5/6 天（index 3..5）产出
+      expect(r.slots.length, 3);
+      expect(r.slots.first.date, monday.addDays(3));
+    });
+
+    test('fromDate 当天算生效', () {
+      final r = Scheduler.expand(
+        specs: [spec(fromDateOverride: monday)],
+        from: monday,
+        to: monday,
+      );
+      expect(r.slots.length, 1);
+    });
+  });
+
+  group('跨天排序（合并多项目的真实触发顺序）', () {
+    test('宵夜药（次日 01:00）排在早起药（次日 07:00）之前', () {
+      final r = Scheduler.expand(
+        specs: [
+          spec(
+            id: 'lateNight',
+            time: MealTimesRule(
+              anchors: [MealAnchor.dinner],
+              offsetMinutes: 240,
+              anchorOverrides: {MealAnchor.dinner: LocalTime(21, 0)},
+            ),
+          ),
+          spec(id: 'morning', time: FixedTimesRule([LocalTime(7, 0)])),
+        ],
+        from: monday,
+        to: monday,
+      );
+      // 顺序应是：周一 07:00 morning → 周二 01:00 lateNight(疗程日周一)
+      expect(
+        r.slots.map((s) => '${s.dueAt} ${s.taskId}').toList(),
+        ['2026-10-19 07:00 morning', '2026-10-20 01:00 lateNight'],
+      );
+    });
+
+    test('同一项目跨天后 index 仍按时间递增', () {
+      final r = Scheduler.expand(
+        specs: [
+          spec(
+            id: 'x',
+            time: MealTimesRule(
+              anchors: [MealAnchor.dinner],
+              offsetMinutes: 240,
+              anchorOverrides: {MealAnchor.dinner: LocalTime(21, 0)},
+            ),
+          ),
+        ],
+        from: monday,
+        to: monday.addDays(1),
+      );
+      // 两个疗程日各一条，index 都是 0
+      expect(r.slots.map((s) => s.index).toList(), [0, 0]);
+      expect(r.slots.map((s) => s.date).toList(), [monday, monday.addDays(1)]);
     });
   });
 }

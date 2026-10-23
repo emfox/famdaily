@@ -15,6 +15,12 @@ import '../model/local_time.dart';
 import '../model/repeat_rule.dart';
 import '../model/time_rule.dart';
 
+/// 向下取整除法。
+///
+/// ⚠️ 不要用 `a ~/ b`：Dart 的 `~/` 与 `%` 对负数**向零截断**，
+/// `-30 ~/ 1440 == 0`、`-30 % 1440 == -30`。跨午夜/饭前偏移全靠这个函数。
+int floorDiv(int a, int b) => (a / b).floor();
+
 /// 一个待做槽位：某项目在某天的第 n 次，应完成于 [dueAt]。
 final class Slot implements Comparable<Slot> {
   const Slot({
@@ -74,7 +80,7 @@ final class LocalDateTimeRef implements Comparable<LocalDateTimeRef> {
     LocalDate date,
     int minuteOfDay,
   ) {
-    final dayShift = (minuteOfDay / 1440).floor();
+    final dayShift = floorDiv(minuteOfDay, 1440);
     final rem = minuteOfDay - dayShift * 1440;
     return LocalDateTimeRef(
       date.addDays(dayShift),
@@ -111,6 +117,7 @@ final class ScheduleSpec {
     required this.repeat,
     required this.time,
     required this.course,
+    this.fromDate,
     this.enabled = true,
   });
 
@@ -119,8 +126,25 @@ final class ScheduleSpec {
   final TimeRule time;
   final Course course;
 
+  /// 规则生效日（含）。[LocalDate] 为空表示"一直有效"。
+  ///
+  /// 这是"改规则不影响历史"（需求 3.2.1）的实现关键：
+  /// 编辑项目时把旧规则封存、新规则从今天起生效，历史照旧按旧规则算。
+  final LocalDate? fromDate;
+
   /// 暂停 / 归档的项目直接不展开（需求 3.2.1 暂停语义）。
   final bool enabled;
+
+  /// 某天是否可能产出槽位（不考虑时刻规则的跨天）。
+  bool appliesOn(LocalDate day) {
+    if (!enabled || !course.contains(day)) {
+      return false;
+    }
+    if (fromDate != null && day.isBefore(fromDate!)) {
+      return false;
+    }
+    return repeat.matches(day);
+  }
 }
 
 /// 展开结果：有序槽位 + 诊断信息。
@@ -152,41 +176,72 @@ abstract final class Scheduler {
     final slots = <Slot>[];
     var truncated = false;
 
-    // 按天推进，而不是按项目：这样截断时"先到期的先排上"，
-    // 不会出现"某个项目排满了一个月，另一个项目一条都没有"。
+    // 第一步：按疗程日收集"应完成时刻"。
+    //
+    // 关键：偏移可能把时刻推到次日或前日（如 21:00 饭后 4 小时 → 次日 01:00）。
+    // 所以这里先按 (疗程日, 越界分钟) 收集，第二步再折算成真实日期整体排序，
+    // 这样"今天的宵夜药"和"明天凌晨的药"顺序才是对的。
+    final pending = <({LocalDate day, int minute, String taskId})>[];
     var day = from;
-    outer:
     while (!day.isAfter(to)) {
       for (final spec in specs) {
-        if (!spec.enabled) {
+        if (!spec.appliesOn(day)) {
           continue;
         }
-        if (!spec.course.contains(day)) {
-          continue;
-        }
-        if (!spec.repeat.matches(day)) {
-          continue;
-        }
-        // 用 shiftedMinutesOn 而不是 timesOn：跨午夜的偏移要保留越界值
-        final minutes = spec.time.shiftedMinutesOn(day)..sort();
-        for (var i = 0; i < minutes.length; i++) {
-          if (slots.length >= maxSlots) {
+        for (final m in spec.time.shiftedMinutesOn(day)) {
+          if (pending.length >= maxSlots) {
             truncated = true;
-            break outer;
+            break;
           }
-          final m = minutes[i];
-          slots.add(
-            Slot(
-              taskId: spec.taskId,
-              date: day,
-              index: i,
-              dueAt: LocalDateTimeRef.fromDayAndMinute(day, m),
-              dueMinuteOfDay: m,
-            ),
-          );
+          pending.add((day: day, minute: m, taskId: spec.taskId));
         }
       }
+      if (truncated) {
+        break;
+      }
       day = day.addDays(1);
+    }
+
+    // 第二步：按"真实触发时刻"排序后编号。
+    //
+    // 同一 (taskId, 疗程日) 内的序号必须按时间递增，否则通知 ID 会随偏移抖动，
+    // 已完成记录的 slot_index 会对不上。
+    final expanded = pending
+        .map(
+          (p) => (
+            ref: LocalDateTimeRef.fromDayAndMinute(p.day, p.minute),
+            day: p.day,
+            minute: p.minute,
+            taskId: p.taskId,
+          ),
+        )
+        .toList()
+      ..sort((a, b) {
+        final byTime = a.ref.compareTo(b.ref);
+        if (byTime != 0) {
+          return byTime;
+        }
+        final byTask = a.taskId.compareTo(b.taskId);
+        if (byTask != 0) {
+          return byTask;
+        }
+        return a.day.compareTo(b.day);
+      });
+
+    final indexByTaskDay = <String, int>{};
+    for (final e in expanded) {
+      final groupKey = '${e.taskId}|${e.day.epochDay}';
+      final index = indexByTaskDay[groupKey] ?? 0;
+      indexByTaskDay[groupKey] = index + 1;
+      slots.add(
+        Slot(
+          taskId: e.taskId,
+          date: e.day,
+          index: index,
+          dueAt: e.ref,
+          dueMinuteOfDay: e.minute,
+        ),
+      );
     }
 
     slots.sort();
