@@ -147,6 +147,40 @@ final class HistoryService {
       );
     }
 
+    // 有记录但没槽位的"孤儿"也必须列出来。
+    //
+    // 槽位是调度器算出来的产物，会重排、会清理；而记录是用户真做过的事。
+    // 两者对不上的情况真实存在：新建完项目立刻打卡、但重排还没跑完，
+    // 那天就没有对应槽位——旧代码只遍历槽位，于是这条打卡**凭空消失**，
+    // 用户看到的就是"历史里查不到我刚打的卡"。
+    //
+    // 项目被硬删除时连记录一起没了（外键级联），所以这里能查到的 task
+    // 一定还在，画出来都是该给人看的。
+    final filled = {for (final r in rows) '${r.task.id}|${r.slotIndex}'};
+    for (final record in records) {
+      final key = '${record.taskId}|${record.slotIndex}';
+      if (filled.contains(key)) {
+        continue;
+      }
+      final task = taskMap[record.taskId];
+      if (task == null) {
+        continue;
+      }
+      // 应做时刻优先取记录里存的那份（打卡当时的真实规则），
+      // 没有就退回 0 点——排序会把它排在最前，总比丢掉强。
+      final minute = record.dueAtMinuteOfDay ?? 0;
+      rows.add(
+        CheckinRow(
+          task: task,
+          date: date,
+          slotIndex: record.slotIndex,
+          dueAt: LocalDateTimeRef(date, LocalTime.fromMinuteOfDay(minute)),
+          dueMinuteOfDay: minute,
+          record: record,
+        ),
+      );
+    }
+
     // 先按成员顺序，再按时间——照着"谁、几点"读下来最顺。
     rows.sort((a, b) {
       final ma = memberOrder[a.task.memberId] ?? 1 << 20;

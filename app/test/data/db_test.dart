@@ -203,6 +203,29 @@ void main() {
       expect(t.status, domain.TaskStatus.paused);
       expect(t.isLive, isFalse);
     });
+
+    test('lastUsedMemberId 取最近建的那个成员，软删掉的就回退', () async {
+      // 外层 setUp 已经建好 m1
+      await db.insertMember(_member('m2', '妈妈'), nowMs: _now);
+
+      expect(await db.lastUsedMemberId(), isNull, reason: '一个项目都没有');
+
+      await db.insertTask(_task('t1', memberId: 'm1'), nowMs: _now);
+      expect(await db.lastUsedMemberId(), 'm1');
+
+      // t2 建得更晚。真实代码里新建项目的 sortOrder 就是建它的时间戳
+      // （见 task_edit_page._save），这里照搬这个口径，别用默认的 0
+      // ——否则两条 sortOrder 打平，排序退化成数据库返回顺序，测了个假。
+      await db.insertTask(
+        _task('t2', memberId: 'm2').copyWith(sortOrder: _now + 1000),
+        nowMs: _now,
+      );
+      expect(await db.lastUsedMemberId(), 'm2');
+
+      // 软删掉最近那个，回退到前一个——不能返回一个已经删掉的项目的人
+      await db.deleteTask('t2', nowMs: _now);
+      expect(await db.lastUsedMemberId(), 'm1');
+    });
   });
 
   group('打卡记录', () {

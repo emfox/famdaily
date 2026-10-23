@@ -406,10 +406,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _toast('先加一个成员，才能给他安排打卡');
       return;
     }
+    // 默认选中"上次给谁建过"。家里常连着给同一个人建好几项
+    // （爷爷的降压药、爷爷的量血压…），每次手点一遍是白费劲。
+    // 查不到就传 null，页面自然要求用户选。
+    final lastMemberId = await widget.services.db.lastUsedMemberId();
+    if (!mounted) {
+      return;
+    }
     // 与编辑一致：只回 `bool`（存没存成）。写库在 `_saveTask` 里已经发生过了。
     final saved = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
-        builder: (_) => TaskEditPage(members: _members, onSave: _saveTask),
+        builder: (_) => TaskEditPage(
+          members: _members,
+          onSave: _saveTask,
+          initialMemberId: lastMemberId,
+        ),
       ),
     );
     if (saved != true || !mounted) {

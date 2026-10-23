@@ -25,6 +25,7 @@ class TaskEditPage extends StatefulWidget {
     required this.onSave,
     this.initialTemplate,
     this.initialTask,
+    this.initialMemberId,
     super.key,
   }) : assert(
          initialTemplate == null || initialTask == null,
@@ -53,6 +54,13 @@ class TaskEditPage extends StatefulWidget {
   /// 编辑模式的原项目。
   final Task? initialTask;
 
+  /// 新建时预先选好的成员（"上次给谁建过"）。
+  ///
+  /// 单成员场景由页面自己兜底，这里主要解决多成员时每次都要手点的问题。
+  /// 传进来的 id 若已不在 [members] 里（成员被删了），当作没传——
+  /// 调用方不必自己校验。
+  final String? initialMemberId;
+
   @override
   State<TaskEditPage> createState() => _TaskEditPageState();
 }
@@ -79,9 +87,18 @@ class _TaskEditPageState extends State<TaskEditPage> {
       _draft = TaskDraft.fromTemplate(TaskTemplate.blank);
       _step = 0;
     }
-    // 单成员时不问"谁做"——只有一个答案的选择题不必出题。
-    if (_draft.memberId == null && widget.members.length == 1) {
-      _draft.memberId = widget.members.single.id;
+    // "谁做"的默认值，按可信度从高到低：
+    //   1. 编辑：保持原项目的成员，不要因为"上次给别人建过"就换人
+    //   2. 只有一个成员：直接选上，不必出这道只有唯一答案的选择题
+    //   3. 上次建过项目的那个人：家里常连着给同一个人建好几项
+    // 传入的 id 可能已经失效（成员被删），所以统一用 members 校验一遍。
+    if (_draft.memberId == null && widget.initialTask == null) {
+      final candidate = widget.members.length == 1
+          ? widget.members.single.id
+          : widget.initialMemberId;
+      if (candidate != null && widget.members.any((m) => m.id == candidate)) {
+        _draft.memberId = candidate;
+      }
     }
   }
 

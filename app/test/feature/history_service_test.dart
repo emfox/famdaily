@@ -391,4 +391,91 @@ void main() {
       expect(grouped.keys, ['m1']);
     });
   });
+
+  group('有记录但没槽位（孤儿记录）', () {
+    // 真机反馈："历史里当天已完成的好像没有记录"。
+    //
+    // 槽位是调度器算出来的，会重排、会清理；记录是用户真做过的事。
+    // 新建完项目立刻打卡、而重排还没跑完时，那天就没有槽位。
+    // 旧实现只遍历槽位，这条打卡就凭空消失了。
+    test('打了卡但没有槽位，历史里也要列出来', () async {
+      final task = _task('t1', 'm1', '跳绳', [8]);
+      await db.insertTask(task, nowMs: _ts);
+      // 故意不 seedSlots
+
+      await db.upsertCheckin(
+        domain.CheckinRecord(
+          id: 'c1',
+          taskId: 't1',
+          date: domain.LocalDate(2026, 3, 10),
+          slotIndex: 0,
+          state: domain.CheckinState.done,
+          doneAtMs: _ts,
+          dueAtMinuteOfDay: 480,
+        ),
+        nowMs: _ts,
+      );
+
+      final detail = await service.loadDay(
+        domain.LocalDate(2026, 3, 10),
+        at: DateTime(2026, 3, 10, 9),
+      );
+
+      expect(detail.rows, hasLength(1), reason: '打过卡的记录不能因为没槽位就丢掉');
+      expect(detail.rows.single.record?.state, domain.CheckinState.done);
+      expect(detail.rows.single.dueMinuteOfDay, 480);
+    });
+
+    test('有槽位也有记录时不会重复列两遍', () async {
+      final task = _task('t1', 'm1', '跳绳', [8]);
+      await db.insertTask(task, nowMs: _ts);
+      await seedSlots(
+        task,
+        from: domain.LocalDate(2026, 3, 1),
+        to: domain.LocalDate(2026, 3, 31),
+      );
+      await db.upsertCheckin(
+        domain.CheckinRecord(
+          id: 'c1',
+          taskId: 't1',
+          date: domain.LocalDate(2026, 3, 10),
+          slotIndex: 0,
+          state: domain.CheckinState.done,
+          doneAtMs: _ts,
+          dueAtMinuteOfDay: 480,
+        ),
+        nowMs: _ts,
+      );
+
+      final detail = await service.loadDay(
+        domain.LocalDate(2026, 3, 10),
+        at: DateTime(2026, 3, 10, 9),
+      );
+
+      expect(detail.rows, hasLength(1));
+    });
+
+    test('孤儿记录也计入当天的完成数', () async {
+      final task = _task('t1', 'm1', '跳绳', [8]);
+      await db.insertTask(task, nowMs: _ts);
+      await db.upsertCheckin(
+        domain.CheckinRecord(
+          id: 'c1',
+          taskId: 't1',
+          date: domain.LocalDate(2026, 3, 10),
+          slotIndex: 0,
+          state: domain.CheckinState.done,
+          doneAtMs: _ts,
+          dueAtMinuteOfDay: 480,
+        ),
+        nowMs: _ts,
+      );
+
+      final detail = await service.loadDay(
+        domain.LocalDate(2026, 3, 10),
+        at: DateTime(2026, 3, 10, 9),
+      );
+      expect(detail.summary.onTime + detail.summary.makeup, 1);
+    });
+  });
 }

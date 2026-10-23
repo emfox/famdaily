@@ -348,4 +348,99 @@ void main() {
     expect(calls, 1, reason: '保存中重复点击不能重复写库');
     expect(find.text('新建'), findsOneWidget, reason: '存完就该回首页');
   });
+
+  // -------------------------------------------------------------------------
+  // 默认选中"上次给谁建过"
+  // -------------------------------------------------------------------------
+
+  testWidgets('新建时默认选中上次建过的成员，不用手点', (tester) async {
+    tester.view.physicalSize = const Size(400, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    domain.Task? saved;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: TaskEditPage(
+          members: members,
+          onSave: (t) async => saved = t,
+          initialMemberId: 'm2',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('跳绳'));
+    await tester.pumpAndSettle();
+    // 已经默认选上「小宝」，顶栏不该再说"还差：选一下谁做"
+    expect(find.textContaining('还差：'), findsNothing);
+    expect(find.text('还要选一个人，才能创建'), findsNothing);
+
+    await tester.tap(find.text('下一步'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('创建'));
+    await tester.pumpAndSettle();
+
+    expect(saved, isNotNull);
+    expect(saved!.memberId, 'm2', reason: '应该存到上次那个人名下');
+  });
+
+  testWidgets('传进来的成员已失效时不要瞎选，退回让用户自己挑', (tester) async {
+    tester.view.physicalSize = const Size(400, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: TaskEditPage(
+          members: members,
+          onSave: (_) async {},
+          initialMemberId: 'gone',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('跳绳'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('还差：选一下谁做'), findsOneWidget);
+  });
+
+  testWidgets('编辑时保留原项目的成员，不被"上次那个人"顶掉', (tester) async {
+    tester.view.physicalSize = const Size(400, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final existing = domain.Task(
+      id: 'keep',
+      memberId: 'm1',
+      name: '降压药',
+      repeat: const domain.RepeatRule(),
+      time: domain.FixedTimesRule([domain.LocalTime(8, 0)]),
+      course: domain.Course.none,
+      status: domain.TaskStatus.active,
+      createdAtMs: _ts,
+      updatedAtMs: _ts,
+    );
+
+    domain.Task? saved;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: TaskEditPage(
+          members: members,
+          onSave: (t) async => saved = t,
+          initialMemberId: 'm2',
+          initialTask: existing,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('下一步'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+
+    expect(saved!.memberId, 'm1', reason: '编辑不该偷偷换成员');
+  });
 }

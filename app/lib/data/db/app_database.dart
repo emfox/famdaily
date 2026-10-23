@@ -182,6 +182,32 @@ class AppDatabase extends _$AppDatabase {
     return rows.map<domain.Task>(Mappers.taskFromRow).toList();
   }
 
+  /// 最近一次"给谁建了项目"的成员 id，没有就返回 null。
+  ///
+  /// 用来做新建表单的默认成员：家里通常是同一个人连着建好几项
+  /// （爷爷的药、爷爷的量血压…），每次都手点一下是白费劲。
+  ///
+  /// 为什么查库而不存一份偏好：存偏好就多了一份需要同步的状态——
+  /// 成员删了、项目删了都要手动清。直接问"最后建的那个项目属于谁"
+  /// 天然自洽，成员没了自然就查不到，退回"没默认值"。
+  ///
+  /// 排序口径与 [listAllTasks] 一致（sortOrder 大的更新）。软删除的项目
+  /// 不算，否则删掉最近那条之后默认值会指向一个已删项目。
+  Future<String?> lastUsedMemberId() async {
+    final row =
+        await (select(tasks)
+              ..where((t) => t.deletedAtMs.isNull())
+              ..orderBy([
+                (t) => OrderingTerm(
+                  expression: t.sortOrder,
+                  mode: OrderingMode.desc,
+                ),
+              ])
+              ..limit(1))
+            .getSingleOrNull();
+    return row?.memberId;
+  }
+
   Stream<List<domain.Task>> watchAllTasks() {
     return (select(tasks)
           ..where((t) => t.deletedAtMs.isNull())
