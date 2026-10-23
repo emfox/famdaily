@@ -99,6 +99,26 @@ flutter analyze
 > **还没做的**：把 APK 装进真手机点一遍。沙箱里没有设备，所以系统弹窗、
 > 相机、通知横幅这些只有上手才知道的环节仍是空白。构建通过 ≠ 真机可用。
 
+打完包务必跑一下自检：
+
+```bash
+./tool/check_apk.sh        # 确认 libsqlite3.so 真的在 APK 里
+```
+
+**这个自检不是形式主义**。第一版 APK 装到手机上直接弹"启动失败"：
+
+```
+Invalid argument(s): Couldn't resolve native function 'sqlite3_temp_directory'
+  in 'package:sqlite3/src/ffi/libsqlite3.g.dart'
+Failed to load dynamic library 'libsqlite3.so'
+```
+
+原因是 `pubspec.yaml` 里有一段 `hooks: user_defines: sqlite3: source: system`
+——那是沙箱里绕开 github 下载的临时办法，让 Dart 去加载操作系统自带的
+libsqlite3。桌面和 `flutter test` 都能用，但 **Android 不提供公开的
+libsqlite3.so**，于是构建全程零警告，装上就崩。该段已删除，
+`sqlite3_flutter_libs` 恢复打 native 库的正常路径（APK 因此从 90MB 涨到 104MB）。
+
 **三个构建期才暴露的坑**（都是"编译能过、装上就废"或"直接编不过"的类型，已修）：
 
 1. **`flutter_local_notifications` 要求 core library desugaring**。
