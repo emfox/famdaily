@@ -125,14 +125,28 @@ class _TaskEditPageState extends State<TaskEditPage> {
 
     try {
       await widget.onSave(task);
-      if (mounted) {
-        Navigator.of(context).pop(true);
-      }
-    } finally {
+    } catch (e) {
+      // 写库失败绝不能把用户按在这一页——他只会以为"点了没反应"，
+      // 然后一直点，每点一次就多一条记录。报错，然后让他能重试或退出。
       if (mounted) {
         setState(() => _saving = false);
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(SnackBar(content: Text('没存上：$e')));
       }
+      return;
     }
+
+    if (!mounted) {
+      return;
+    }
+    // 成功就退出，返回 `true`（存没存成）。
+    //
+    // 这里**必须**回 bool，不能回 Task：调用方是 push<bool>。曾经新建走
+    // push<Task> + 这里 pop(true)，路由类型对不上，页面根本不关，
+    // 但库里的记录一条不少地插进去了——用户看到的就是"点了没反应，
+    // 回主页却多出一堆"。
+    Navigator.of(context).pop(true);
   }
 
   @override

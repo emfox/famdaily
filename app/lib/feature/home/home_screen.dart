@@ -406,18 +406,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _toast('先加一个成员，才能给他安排打卡');
       return;
     }
-    final created = await Navigator.of(context).push<Task>(
+    // 与编辑一致：只回 `bool`（存没存成）。写库在 `_saveTask` 里已经发生过了。
+    final saved = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => TaskEditPage(members: _members, onSave: _saveTask),
       ),
     );
-    if (created == null || !mounted) {
+    if (saved != true || !mounted) {
       return;
     }
     await _afterChange();
-    if (mounted) {
-      _toast('已加上「${created.name}」');
-    }
   }
 
   /// 表单里点「创建 / 保存」时落到库里的动作。

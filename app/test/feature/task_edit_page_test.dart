@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:famdaily/domain/model/course.dart' as domain;
 import 'package:famdaily/domain/model/local_date.dart' as domain;
 import 'package:famdaily/domain/model/local_time.dart' as domain;
@@ -182,5 +184,126 @@ void main() {
     expect(saved!.id, 'keep-me');
     expect(saved!.createdAtMs, _ts);
     expect(saved!.memberId, 'm2');
+  });
+
+  // -------------------------------------------------------------------------
+  // 真机上出过的 bug：新建走 push<Task>，页面 pop(true)，路由类型对不上，
+  // 页面卡在原地不关，用户以为没反应就接着点，结果库里插了一堆。
+  //
+  // 原来的测试都把 TaskEditPage 直接当 home 挂着，压根没有可 pop 的路由，
+  // 所以 pop 能不能正常关闭页面从来没被验证过。下面两个测试补上这一环。
+  // -------------------------------------------------------------------------
+
+  /// 像真机一样从首页 push 进来，返回 push 的结果。
+  Future<bool?> pushFromHome(
+    WidgetTester tester, {
+    required Future<void> Function(domain.Task) onSave,
+  }) async {
+    tester.view.physicalSize = const Size(400, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    bool? result;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: Center(
+              child: ElevatedButton(
+                onPressed: () async {
+                  // 和 home_screen.dart 的 _newTask 用同一个签名：push<bool>。
+                  result = await Navigator.of(context).push<bool>(
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          TaskEditPage(members: members, onSave: onSave),
+                    ),
+                  );
+                },
+                child: const Text('新建'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('新建'));
+    await tester.pumpAndSettle();
+    return result;
+  }
+
+  testWidgets('创建成功后页面应当关闭，并带回 true', (tester) async {
+    await pushFromHome(tester, onSave: (_) async {});
+
+    await tester.tap(find.text('跳绳'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('爷爷'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('下一步'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('创建'));
+    await tester.pumpAndSettle();
+
+    // 页面必须已经退出：回到首页那个"新建"按钮
+    expect(find.text('新建'), findsOneWidget);
+    expect(find.text('创建'), findsNothing);
+  });
+
+  testWidgets('写库抛错时不能把用户按在页面上，要点得动也退得掉', (tester) async {
+    await pushFromHome(
+      tester,
+      onSave: (_) async => throw StateError('磁盘满了'),
+    );
+
+    await tester.tap(find.text('跳绳'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('爷爷'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('下一步'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('创建'));
+    await tester.pumpAndSettle();
+
+    // 报错要说人话，让人知道是没存上，而不是"点了没反应"
+    expect(find.textContaining('没存上'), findsOneWidget);
+    // 按钮恢复可点，而不是永久灰掉（永久灰 + 停在同一页 = 只能杀 App）
+    final btn = tester.widget<FilledButton>(find.byType(FilledButton));
+    expect(btn.onPressed, isNotNull);
+  });
+
+  testWidgets('创建只插一条：写库还没返回时连点，也只存一遍', (tester) async {
+    var calls = 0;
+    final gate = Completer<void>();
+
+    await pushFromHome(
+      tester,
+      onSave: (_) async {
+        calls += 1;
+        await gate.future;
+      },
+    );
+
+    await tester.tap(find.text('跳绳'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('爷爷'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('下一步'));
+    await tester.pumpAndSettle();
+
+    // 第一次点：进入保存中
+    await tester.tap(find.text('创建'));
+    await tester.pump();
+    // 保存中连点第三、第四次。按钮此时应当已禁用，点到也无效。
+    await tester.tap(find.text('创建'), warnIfMissed: false);
+    await tester.pump();
+    await tester.tap(find.text('创建'), warnIfMissed: false);
+    await tester.pump();
+
+    gate.complete();
+    await tester.pumpAndSettle();
+
+    expect(calls, 1, reason: '保存中重复点击不能重复写库');
+    expect(find.text('新建'), findsOneWidget, reason: '存完就该回首页');
   });
 }
