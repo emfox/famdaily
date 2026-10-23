@@ -1,8 +1,4 @@
-import 'dart:io';
-
 import 'package:drift/drift.dart';
-import 'package:drift/native.dart';
-import 'package:drift_flutter/drift_flutter.dart';
 
 // 转换器列（courseStart / date / dueTime…）在生成的 .g.dart（part）里
 // 直接引用 LocalDate / LocalTime 类型名，所以这两个**不能**加前缀，
@@ -15,8 +11,13 @@ import '../../domain/model/checkin_state.dart' as domain;
 import '../../domain/model/member.dart' as domain;
 import '../../domain/model/task.dart' as domain;
 import '../../domain/model/task_status.dart' as domain;
+// 平台连接走条件导入：Web 没有 dart:ffi，native 实现不能进编译单元。
+import 'db_connection.dart';
 import 'mappers.dart';
 import 'tables.dart';
+
+export 'db_connection.dart'
+    show openTestConnection, openFileConnection;
 
 part 'app_database.g.dart';
 
@@ -596,19 +597,7 @@ final class BackupCounts {
 }
 
 /// 真机/模拟器上的数据库连接。
-QueryExecutor _openConnection() {
-  return driftDatabase(
-    name: 'famdaily',
-    native: const DriftNativeOptions(shareAcrossIsolates: true),
-  );
-}
-
-/// 纯 Dart 测试用的内存库（`flutter test` 里不需要模拟器）。
-QueryExecutor openTestConnection() {
-  return NativeDatabase.memory();
-}
-
-/// 桌面调试时指向真实文件的连接（给将来 PC 端 / 调试工具用）。
-QueryExecutor openFileConnection(String path) {
-  return NativeDatabase(File(path));
-}
+///
+/// 实现见 db_connection_io.dart / db_connection_web.dart：
+/// Web 没有 dart:ffi，必须靠条件导入把 native 实现挡在编译单元之外。
+QueryExecutor _openConnection() => openPlatformConnection();

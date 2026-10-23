@@ -9,6 +9,13 @@
     <!-- 重启后重排通知（否则手机重启，提醒就静默消失了）。 -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <uses-permission android:name="android.permission.VIBRATE"/>
+    <!-- 打卡凭证照片。**不申请 CAMERA 权限**：image_picker 走的是
+         ACTION_IMAGE_CAPTURE Intent，由系统相机 App 拍照，我们只收结果。
+         声明了 CAMERA 反而会让系统认为"你自己要拍照"，从而强制要走
+         运行时授权（而且 Android 11+ 上声明了却不用会显得可疑）。 -->
+    <!-- Android 11+ 的包可见性：不声明这两条，image_picker 查不到
+         系统相机和相册，表现为"点了没反应"，不报错、极难排查。 -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
 
     <application
         android:label="Famdaily"
@@ -67,6 +74,15 @@
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
+        </intent>
+        <!-- image_picker：拍照（系统相机 App） -->
+        <intent>
+            <action android:name="android.media.action.IMAGE_CAPTURE"/>
+        </intent>
+        <!-- image_picker：从相册选 -->
+        <intent>
+            <action android:name="android.intent.action.GET_CONTENT"/>
+            <data android:mimeType="image/*"/>
         </intent>
     </queries>
 </manifest>

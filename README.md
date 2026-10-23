@@ -86,8 +86,35 @@ flutter test          # 486 个测试，十几秒跑完
 flutter analyze
 ```
 
-> 沙箱里出不了 APK / Web 包，所以「能跑」是靠测试实证的：界面能画出来、
-> 流程能走通、坏数据不会炸。真机验证还没做。
+### 构建产物（已验证可出包）
+
+三个目标都真机级别地构建过了，不是"应该能过"：
+
+| 目标 | 命令 | 结果 |
+|---|---|---|
+| Android APK | `flutter build apk --debug` | ✅ `app-debug.apk`（90MB，arm64 单 ABI） |
+| Web | `flutter build web --release` | ✅ `build/web`，wasm 试运行也通过 |
+| Linux 桌面 | `flutter build linux --debug` | ✅ `build/linux/x64/debug/bundle` |
+
+> **还没做的**：把 APK 装进真手机点一遍。沙箱里没有设备，所以系统弹窗、
+> 相机、通知横幅这些只有上手才知道的环节仍是空白。构建通过 ≠ 真机可用。
+
+**三个构建期才暴露的坑**（都是"编译能过、装上就废"或"直接编不过"的类型，已修）：
+
+1. **`flutter_local_notifications` 要求 core library desugaring**。
+   它内部用 `java.time`，而 `java.time` 在 Android 上要 API 26；本项目
+   `minSdk = 24`（刻意不抬，家里旧机器要能用）。缺少时构建硬失败在
+   `:app:checkDebugAarMetadata`。已在 `app/build.gradle.kts` 开
+   `isCoreLibraryDesugaringEnabled` 并加 `desugar_jdk_libs` 依赖。
+2. **Android 11+ 的包可见性**。`image_picker` 走系统相机 / 相册的 Intent，
+   `<queries>` 里不声明 `IMAGE_CAPTURE` 和 `GET_CONTENT`，表现是**点了没反应**，
+   不报错、不闪退，最难查。已补，并说明为什么故意不申请 `CAMERA` 权限。
+3. **iOS 缺 `NSCameraUsageDescription` 是闪退，不是弹窗被拒**。
+   三个 UsageDescription 已补齐。
+
+另外把 `dart:io` / `drift/native.dart` 换成了条件导入（`db_connection.dart`
+选 io 还是 web 实现）。不这么做 Web 编译直接失败：
+`Dart library 'dart:ffi' is not available on this platform`。
 
 ### 提醒怎么排的（一层一句话）
 

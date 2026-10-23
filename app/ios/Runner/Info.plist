@@ -6,6 +6,17 @@
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<!-- 拍照/相册：打卡凭证。**这三条缺一不可**——iOS 上调用相机或
+	     相册却没有对应的 UsageDescription，App 会被系统直接杀掉（不是
+	     弹窗拒绝，是闪退），且崩溃日志里只说 "privacy sensitive API"，
+	     非常难查。
+	     文案会原样显示在系统授权弹窗里，所以说人话，不写"为了优化体验"。 -->
+	<key>NSCameraUsageDescription</key>
+	<string>拍下药盒、作业本或体重秤，给这条打卡留个凭证。照片只存在你自己的手机里。</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>从相册里挑一张照片作为打卡凭证。照片只存在你自己的手机里。</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>把打卡照片存进相册。</string>
 	<key>CFBundleDisplayName</key>
 	<string>Famdaily</string>
 	<key>CFBundleExecutable</key>
