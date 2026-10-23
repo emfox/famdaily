@@ -149,10 +149,31 @@ class _TaskEditPageState extends State<TaskEditPage> {
     Navigator.of(context).pop(true);
   }
 
+  /// 顶栏的保存/创建按钮。
+  ///
+  /// 文字**恒定**为「创建」/「保存」：按钮的名字说明它做什么，
+  /// 不该拿来当提示牌。缺什么由页面上的字段提示和底栏那行来说。
+  Widget _saveButton() {
+    if (_saving) {
+      return const FilledButton(
+        onPressed: null,
+        child: SizedBox(
+          width: 16,
+          height: 16,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      );
+    }
+
+    return FilledButton(
+      onPressed: _draft.canSave ? _save : null,
+      child: Text(_isEditing ? '保存' : '创建'),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final canSave = _draft.canSave;
 
     return PopScope(
       // 有未保存的输入时先问一句，避免误触返回键丢掉三步的成果。
@@ -186,13 +207,25 @@ class _TaskEditPageState extends State<TaskEditPage> {
                 _stepTitles[_step],
                 style: theme.textTheme.titleMedium,
               ),
-              if (_step > 0)
+              if (_step > 0) ...[
+                if (_draft.blocker != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      '还差：${_draft.blocker!.hint}',
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        color: theme.colorScheme.error,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
                 Text(
                   '第 ${_step + 1} / 3 步',
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: theme.colorScheme.outline,
                   ),
                 ),
+              ],
             ],
           ),
           actions: [
@@ -203,21 +236,16 @@ class _TaskEditPageState extends State<TaskEditPage> {
                       onPressed: () => setState(() => _step += 1),
                       child: const Text('下一步'),
                     )
-                  : FilledButton(
-                      onPressed: canSave && !_saving ? _save : null,
-                      child: Text(_isEditing ? '保存' : '创建'),
-                    ),
+                  : _saveButton(),
             ),
           ],
         ),
         body: Column(
           children: [
             Expanded(child: _body()),
-            _PreviewBar(
-              draft: _draft,
-              memberName: _memberName,
-              blockingReason: _step == 2 ? _draft.blockReason : null,
-            ),
+            // 缺项只在顶栏说一次。底栏再重复一遍是噪音——
+            // 同一句话隔半个屏幕出现两次，读起来像是两个不同的问题。
+            _PreviewBar(draft: _draft, memberName: _memberName),
           ],
         ),
       ),
@@ -283,17 +311,10 @@ class _TaskEditPageState extends State<TaskEditPage> {
 /// 它不是装饰：三层时间规则 × 疗程有太多组合，用户很难在控件之间脑补出
 /// 最终效果。这句复述是从 `buildTimeRule()` 真展开出来的，改了哪里立刻能看出。
 class _PreviewBar extends StatelessWidget {
-  const _PreviewBar({
-    required this.draft,
-    required this.memberName,
-    required this.blockingReason,
-  });
+  const _PreviewBar({required this.draft, required this.memberName});
 
   final TaskDraft draft;
   final String? memberName;
-
-  /// 非空时在预览上方红字提示"还差什么"，替代"保存按钮莫名灰着"。
-  final String? blockingReason;
 
   @override
   Widget build(BuildContext context) {
@@ -329,21 +350,6 @@ class _PreviewBar extends StatelessWidget {
             draft.buildPreview(memberName: memberName),
             style: theme.textTheme.bodyMedium?.copyWith(height: 1.45),
           ),
-          if (blockingReason != null) ...[
-            const SizedBox(height: 6),
-            Row(
-              children: [
-                Icon(Icons.info_outline, size: 14, color: scheme.error),
-                const SizedBox(width: 6),
-                Text(
-                  blockingReason!,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: scheme.error,
-                  ),
-                ),
-              ],
-            ),
-          ],
         ],
       ),
     );

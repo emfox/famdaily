@@ -91,7 +91,39 @@ void main() {
     );
   });
 
-  testWidgets('没选成员时保存按钮点不动，并说明差什么', (tester) async {
+  testWidgets('没选成员时：按钮仍叫「创建」且不可点，但提示要摆在看得见的地方', (tester) async {
+    await pumpPage(tester, onSave: (_) async {});
+
+    // 选模板后自动进第 2 步（基本信息），成员就在这一页
+    await tester.tap(find.text('跳绳'));
+    await tester.pumpAndSettle();
+
+    // 真机反馈过的三件事：
+    //   1. 按钮是灰的，点不动——这是对的，不能存就是不能存
+    //   2. 但没有任何明显提示
+    //   3. 唯一的那行红字藏在页面最底下
+    //
+    // 提示「谁做」这一栏就地指着具体该动的地方
+    expect(find.text('还要选一个人，才能创建'), findsOneWidget);
+
+    // 顶栏也要说（视线所在处，不用往下翻）
+    expect(find.text('还差：选一下谁做'), findsOneWidget);
+
+    await tester.tap(find.text('下一步'));
+    await tester.pumpAndSettle();
+
+    // 按钮文字必须恒定。「创建」的名字说明它做什么，不该拿来当提示牌
+    // 写着「选谁做」——那会让人以为它换了用途。提示归提示，按钮归按钮。
+    expect(find.text('创建'), findsOneWidget, reason: '按钮文字不能随缺项变');
+    expect(find.text('选谁做'), findsNothing);
+    final btn = tester.widget<FilledButton>(find.byType(FilledButton));
+    expect(btn.onPressed, isNull, reason: '条件不满足时不该能点');
+
+    // 到了第 3 步，顶栏照样提醒还没选人，而不是让人以为只差点时间
+    expect(find.text('还差：选一下谁做'), findsOneWidget);
+  });
+
+  testWidgets('选了成员之后按钮可点，提示全部消失', (tester) async {
     var called = false;
     await pumpPage(
       tester,
@@ -100,17 +132,21 @@ void main() {
 
     await tester.tap(find.text('跳绳'));
     await tester.pumpAndSettle();
+    await tester.tap(find.text('爷爷'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('下一步'));
     await tester.pumpAndSettle();
 
-    // 成员没选：预览区给出原因，按钮 disabled
-    expect(find.text('选一下谁做'), findsOneWidget);
-    final button = tester.widget<FilledButton>(find.byType(FilledButton));
-    expect(button.onPressed, isNull);
+    expect(find.text('创建'), findsOneWidget);
+    expect(find.textContaining('还差：'), findsNothing);
+    expect(find.text('还要选一个人，才能创建'), findsNothing);
 
-    await tester.tap(find.text('创建'), warnIfMissed: false);
+    final btn = tester.widget<FilledButton>(find.byType(FilledButton));
+    expect(btn.onPressed, isNotNull);
+
+    await tester.tap(find.text('创建'));
     await tester.pumpAndSettle();
-    expect(called, isFalse);
+    expect(called, isTrue);
   });
 
   testWidgets('改了名字会即时反映到预览', (tester) async {
@@ -294,10 +330,16 @@ void main() {
     // 第一次点：进入保存中
     await tester.tap(find.text('创建'));
     await tester.pump();
-    // 保存中连点第三、第四次。按钮此时应当已禁用，点到也无效。
-    await tester.tap(find.text('创建'), warnIfMissed: false);
+
+    // 保存中按钮变成转圈的进度条，文字「创建」已经不存在了，
+    // 所以后面按类型点而不是按文字点——按文字点会因为找不到而误报失败。
+    expect(find.text('创建'), findsNothing, reason: '保存中不该还显示可点的创建');
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    // 连点第三、第四次。按钮此时已禁用，点到也无效。
+    await tester.tap(find.byType(FilledButton), warnIfMissed: false);
     await tester.pump();
-    await tester.tap(find.text('创建'), warnIfMissed: false);
+    await tester.tap(find.byType(FilledButton), warnIfMissed: false);
     await tester.pump();
 
     gate.complete();

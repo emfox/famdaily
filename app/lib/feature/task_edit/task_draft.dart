@@ -34,6 +34,26 @@ enum TimeTab {
 /// 一天最多几个时刻（「一天几次」的 N 上限，ui-spec §2.3）。
 const int maxPointsPerDay = 6;
 
+/// 还差什么才能保存。
+///
+/// 存在的理由：光把「创建」按钮变灰是不够的——用户看到的是一个死按钮，
+/// 得自己去猜哪里没填。有了这个枚举，界面就能把提示摆到**对应控件旁边**，
+/// 让人一眼看到该动哪儿，而不是在页面底部找一行小字。
+enum TaskEditBlocker {
+  name('给它起个名字', '叫它'),
+  member('选一下谁做', '谁做'),
+  time('至少要有一个时间', '什么时候做'),
+  repeat('选的日期永远不会发生', '什么时候做');
+
+  const TaskEditBlocker(this.hint, this.stepTitle);
+
+  /// 完整说明，摆在控件旁边。
+  final String hint;
+
+  /// 这一步的标题（顶栏副标题里的名字），用来告诉用户"去第几步补"。
+  final String stepTitle;
+}
+
 /// 表单的可变状态。
 ///
 /// 刻意做成**可变对象**而不是 `copyWith` 的不可变值：三步表单里每一步都在
@@ -338,6 +358,24 @@ final class TaskDraft {
     }
     if (!effectiveRepeat.isSatisfiable) {
       return '选的日期永远不会发生';
+    }
+    return null;
+  }
+
+  /// 还差什么才能存。给界面用来把提示摆到对应控件旁边，
+  /// 而不是笼统地来一句"不能保存"。
+  TaskEditBlocker? get blocker {
+    if (!hasName) {
+      return TaskEditBlocker.name;
+    }
+    if (memberId == null) {
+      return TaskEditBlocker.member;
+    }
+    if (_timePoints.isEmpty) {
+      return TaskEditBlocker.time;
+    }
+    if (!effectiveRepeat.isSatisfiable) {
+      return TaskEditBlocker.repeat;
     }
     return null;
   }

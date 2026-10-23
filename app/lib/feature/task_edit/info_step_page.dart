@@ -91,6 +91,26 @@ class _InfoStepPageState extends State<InfoStepPage> {
                   color: theme.colorScheme.outline,
                 ),
               ),
+              if (draft.blocker == TaskEditBlocker.member) ...[
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Icon(
+                      Icons.arrow_downward,
+                      size: 13,
+                      color: theme.colorScheme.error,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      '还要选一个人，才能创建',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.error,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
               const SizedBox(height: 10),
               Wrap(
                 spacing: 8,
