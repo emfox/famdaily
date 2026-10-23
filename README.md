@@ -78,14 +78,19 @@
 | **P1 / P2 全部完成** | ✅ |
 | P3：网页端 + 同步 | ⬜ 下一步 |
 
-**486 个测试全绿（含大量 Widget 测试，界面是真的画出来了才通过），`flutter analyze` 零问题。**
+**527 个测试全绿（含大量 Widget 测试，界面是真的画出来了才通过），`flutter analyze` 零问题。**
 
 ```bash
 cd app
 flutter pub get
-flutter test          # 486 个测试，十几秒跑完
+./tool/test.sh        # 527 个测试，十几秒跑完（别直接 flutter test，见下）
 flutter analyze
 ```
+
+**跑测试请用 `./tool/test.sh`，不要直接 `flutter test`。** 这台机器上有两套 Flutter
+（`which flutter` 指向 2022 年的 3.0.0 / Dart 2.17），用错那套的症状是"看起来卡死"：
+3.12 的代码喂给 2.17 的编译器一条都编不过，flutter_tools 反复重试、两分钟刷出 227 万行日志。
+脚本会自己挑 Dart ≥ 3.12 的那套，并把并发钉在 `-j 4`（默认按 32 核开，会把机器压死）。
 
 ### 构建产物（已验证可出包）
 
