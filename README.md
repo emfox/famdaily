@@ -65,14 +65,15 @@
 | `lib/domain/notification`（通知 ID、窗口策略、免打扰、规划器） | ✅ |
 | `lib/data/db`（Drift 六表 + DAO + schema 快照） | ✅ |
 | `lib/data/notifier` + `reminder_scheduler`（平台通知 + 总调度） | ✅ |
-| UI（首页三态 → 建项目 → 历史） | ⬜ 下一步 |
+| 首页今日清单（时间轴 / 成员双视图、五态、打卡、补卡/没做弹层） | ✅ |
+| 新建打卡项表单 · 历史 · 设置 | ⬜ 下一步 |
 
-**202 个测试全绿，`flutter analyze` 零问题，全程不需要模拟器。**
+**217 个测试全绿（含 5 个 Widget 测试，界面是真的画出来了才通过），`flutter analyze` 零问题。**
 
 ```bash
 cd app
 flutter pub get
-flutter test          # 202 个测试，纯 Dart，几秒跑完
+flutter test          # 217 个测试，几秒跑完
 flutter analyze
 ```
 
