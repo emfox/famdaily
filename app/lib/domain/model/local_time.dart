@@ -103,4 +103,7 @@ abstract final class TimeDefaults {
   static const breakfast = LocalTime._(7, 30);
   static const lunch = LocalTime._(12, 0);
   static const dinner = LocalTime._(18, 30);
+
+  /// 新建项目时的默认时刻（晚上八点，一天里最可能"想起来做点事"的时段）。
+  static const evening = LocalTime._(20, 0);
 }

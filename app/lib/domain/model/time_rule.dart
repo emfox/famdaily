@@ -15,6 +15,13 @@ sealed class TimeRule {
   /// [date] 用于"跟随三餐"这类按天计算的规则（若将来引入日落等日相规则也走这里）。
   List<LocalTime> timesOn(LocalDate date);
 
+  /// 不用日期就能展开的规则（固定时刻、间隔、组合）返回 true。
+  ///
+  /// UI 要拿"某天几点"做预览和编辑回填，但**不能固定取今天**——
+  /// 否则日历页预览 3 号时看到的时刻会是今天的；也不能取 1970，
+  /// 因为将来加入"日落"这类日相规则后会算错。所以让规则自己说清楚。
+  bool get isDateIndependent;
+
   /// 展开成**未归一化的当天第几分钟**，允许越界（负数或 > 1439）以表达跨午夜。
   ///
   /// 排程器必须用这个方法而不是 [timesOn]：`timesOn` 会把 21:00+4h 折回 01:00，
@@ -38,6 +45,9 @@ final class FixedTimesRule extends TimeRule {
 
   @override
   List<LocalTime> timesOn(LocalDate date) => _times;
+
+  @override
+  bool get isDateIndependent => true;
 
   @override
   bool operator ==(Object other) =>
@@ -80,6 +90,9 @@ final class MealTimesRule extends TimeRule {
   /// 每个锚点的原始时刻（未加偏移），升序。
   List<LocalTime> rawAnchors() =>
       (anchors.map(timeFor).toList()..sort());
+
+  @override
+  bool get isDateIndependent => false;
 
   @override
   List<LocalTime> timesOn(LocalDate date) => shiftedMinutesOn(date)
@@ -156,6 +169,9 @@ final class IntervalRule extends TimeRule {
   List<LocalTime> timesOn(LocalDate date) => times();
 
   @override
+  bool get isDateIndependent => true;
+
+  @override
   bool operator ==(Object other) =>
       other is IntervalRule &&
       other.everyMinutes == everyMinutes &&
@@ -185,6 +201,10 @@ final class CombinedTimeRule extends TimeRule {
     }
     return set.toList()..sort();
   }
+
+  /// 所有子规则都与日期无关才算无关。
+  @override
+  bool get isDateIndependent => rules.every((r) => r.isDateIndependent);
 
   @override
   bool operator ==(Object other) =>
