@@ -1,4 +1,3 @@
-import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 
 import '../../app/uuid.dart';
@@ -10,6 +9,7 @@ import 'info_step_page.dart';
 import 'task_draft.dart';
 import 'template_step_page.dart';
 import 'time_step_page.dart';
+import '../../app/test_clock.dart';
 
 /// 新建打卡项的三步式二级页（ui-spec §2）。
 ///
@@ -112,7 +112,7 @@ class _TaskEditPageState extends State<TaskEditPage> {
       return;
     }
     setState(() => _saving = true);
-    final nowMs = clock.now().millisecondsSinceEpoch;
+    final nowMs = appNow().millisecondsSinceEpoch;
     final existing = widget.initialTask;
     final task = existing == null
         ? _draft.toTask(

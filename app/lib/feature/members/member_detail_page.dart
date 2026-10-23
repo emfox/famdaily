@@ -1,4 +1,3 @@
-import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 
 import '../../domain/model/local_date.dart';
@@ -7,6 +6,7 @@ import '../../domain/stats/stats.dart';
 import 'member_avatar.dart';
 import 'member_edit_page.dart';
 import 'member_service.dart';
+import '../../app/test_clock.dart';
 
 /// 成员详情（ui-spec §5.3）。
 ///
@@ -54,7 +54,7 @@ class _MemberDetailPageState extends State<MemberDetailPage> {
       Navigator.of(context).pop(_dirty);
       return;
     }
-    final today = LocalDate.fromDateTime(clock.now());
+    final today = LocalDate.fromDateTime(appNow());
     final rows = await widget.service.list();
     final mine = rows.where((r) => r.member.id == member.id).firstOrNull;
     final stats = await widget.service.monthStats(member.id, today: today);
@@ -113,7 +113,7 @@ class _MemberDetailPageState extends State<MemberDetailPage> {
     if (ok ?? false) {
       await widget.service.remove(
         m.id,
-        nowMs: clock.now().millisecondsSinceEpoch,
+        nowMs: appNow().millisecondsSinceEpoch,
       );
       if (!mounted) {
         return;

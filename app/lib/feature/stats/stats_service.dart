@@ -5,13 +5,13 @@
 /// 连续天数会激励人为保数字而补卡，数据就脏了）。
 library;
 
-import 'package:clock/clock.dart';
 
 import '../../data/db/app_database.dart' hide Member, Task, Checkin, Slot;
 import '../../domain/model/checkin_state.dart';
 import '../../domain/model/local_date.dart';
 import '../../domain/model/member.dart';
 import '../../domain/stats/stats.dart';
+import '../../app/test_clock.dart';
 
 /// 统计区间。
 enum StatsPeriod {
@@ -114,7 +114,7 @@ final class StatsService {
     String? memberFilter,
     DateTime? at,
   }) async {
-    final today = LocalDate.fromDateTime(at ?? clock.now());
+    final today = LocalDate.fromDateTime(at ?? appNow());
     final range = DateRange.of(period, today);
 
     final members = await _db.listMembers();

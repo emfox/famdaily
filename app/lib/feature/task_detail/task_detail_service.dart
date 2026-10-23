@@ -4,7 +4,6 @@
 /// 不做交互、不写库。
 library;
 
-import 'package:clock/clock.dart';
 
 import '../../data/db/app_database.dart' hide Member, Task, Checkin, Slot;
 import '../../domain/model/checkin.dart';
@@ -13,6 +12,7 @@ import '../../domain/model/local_date.dart';
 import '../../domain/model/member.dart';
 import '../../domain/model/task.dart';
 import '../../domain/stats/stats.dart';
+import '../../app/test_clock.dart';
 
 /// 最近记录里的一条（按天分组后的一行）。
 final class RecordEntry {
@@ -134,7 +134,7 @@ final class TaskDetailService {
 
   /// 读某项的详情。项目不存在（或被硬删）时返回 null。
   Future<TaskDetail?> load(String taskId, {DateTime? at}) async {
-    final moment = at ?? clock.now();
+    final moment = at ?? appNow();
     final today = LocalDate.fromDateTime(moment);
 
     final task = await _db.findTask(taskId);

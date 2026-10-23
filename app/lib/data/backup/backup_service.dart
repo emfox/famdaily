@@ -6,7 +6,6 @@ library;
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:clock/clock.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -14,6 +13,7 @@ import '../../domain/model/local_date.dart';
 import '../db/app_database.dart' hide Member, Task, Checkin, Slot;
 import 'backup_data.dart';
 import 'backup_io.dart';
+import '../../app/test_clock.dart';
 
 /// 导出的结果：写在哪、多大、装了什么。
 final class ExportResult {
@@ -68,7 +68,7 @@ final class RestorePreview {
 
   /// 备份是不是很久以前的（超过 90 天），用来提醒"别拿旧备份盖新数据"。
   bool isStale({DateTime? at}) {
-    final now = at ?? clock.now();
+    final now = at ?? appNow();
     final then = DateTime.fromMillisecondsSinceEpoch(createdAtMs);
     return now.difference(then).inDays > 90;
   }
@@ -107,7 +107,7 @@ final class BackupService {
     bool includePhotos = false,
     DateTime? at,
   }) async {
-    final now = at ?? clock.now();
+    final now = at ?? appNow();
     final snapshot = await db.readAllForBackup();
 
     // 照片只在明确要求时才读盘，而且缺文件不能整包失败——
@@ -173,7 +173,7 @@ final class BackupService {
   ///
   /// 事务在 `AppDatabase.restoreAll` 里：中途失败整体回滚，老数据还在。
   Future<void> restore(BackupData data, {DateTime? at}) async {
-    final now = at ?? clock.now();
+    final now = at ?? appNow();
     await db.restoreAll(
       BackupSnapshot(
         members: data.members,
@@ -199,7 +199,7 @@ final class BackupService {
     if (ms == null) {
       return null;
     }
-    final now = at ?? clock.now();
+    final now = at ?? appNow();
     final then = DateTime.fromMillisecondsSinceEpoch(ms);
     return now.difference(then).inDays;
   }

@@ -1,9 +1,9 @@
-import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 
 import '../../domain/model/member.dart';
 import 'member_avatar.dart';
 import 'member_service.dart';
+import '../../app/test_clock.dart';
 
 /// 新增 / 编辑成员（ui-spec §5.2）。
 ///
@@ -55,7 +55,7 @@ class _MemberEditPageState extends State<MemberEditPage> {
   bool get _canSave => _name.text.trim().isNotEmpty;
 
   Future<void> _save() async {
-    final nowMs = clock.now().millisecondsSinceEpoch;
+    final nowMs = appNow().millisecondsSinceEpoch;
     final name = _name.text.trim();
     final service = widget.service;
 

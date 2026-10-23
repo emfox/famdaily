@@ -3,7 +3,6 @@
 /// 跟首页的 `TodayService` 是同一类东西：只回答"这一屏该长什么样"，不做交互。
 library;
 
-import 'package:clock/clock.dart';
 
 import '../../data/db/app_database.dart' hide Member, Task, Checkin, Slot;
 import '../../domain/model/checkin.dart';
@@ -14,6 +13,7 @@ import '../../domain/model/local_time.dart';
 import '../../domain/scheduling/scheduler.dart';
 import '../../domain/stats/stats.dart';
 import '../history/history_calendar.dart';
+import '../../app/test_clock.dart';
 
 /// 月历数据集：格子 + 汇总。
 final class MonthView {
@@ -77,7 +77,7 @@ final class HistoryService {
     required int month,
     DateTime? at,
   }) async {
-    final moment = at ?? clock.now();
+    final moment = at ?? appNow();
     final today = LocalDate.fromDateTime(moment);
     final first = LocalDate(year, month, 1);
     final last = first.lastDayOfMonth;
@@ -114,7 +114,7 @@ final class HistoryService {
 
   /// 读某一天的明细。
   Future<DayDetail> loadDay(LocalDate date, {DateTime? at}) async {
-    final moment = at ?? clock.now();
+    final moment = at ?? appNow();
     final today = LocalDate.fromDateTime(moment);
     final nowTime = LocalTime(moment.hour, moment.minute);
 
@@ -222,7 +222,7 @@ final class HistoryService {
       date: row.date,
       slotIndex: row.slotIndex,
       today: today,
-      nowMs: clock.now().millisecondsSinceEpoch,
+      nowMs: appNow().millisecondsSinceEpoch,
     );
   }
 

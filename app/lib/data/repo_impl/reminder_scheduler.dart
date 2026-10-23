@@ -5,7 +5,6 @@
 /// 冷启动 / 回前台跨天 / 数据变更 / 改设置。
 library;
 
-import 'package:clock/clock.dart';
 import 'package:drift/drift.dart';
 import 'package:flutter/foundation.dart';
 
@@ -18,6 +17,7 @@ import '../../domain/notification/window_policy.dart';
 import '../../domain/scheduling/scheduler.dart' as sched;
 import '../db/app_database.dart';
 import '../notifier/notification_service.dart';
+import '../../app/test_clock.dart';
 
 // 展开器的结果类型；`Slot` 与 drift 生成的行别名同名，所以显式收窄。
 typedef _Slot = sched.Slot;
@@ -97,7 +97,7 @@ final class ReminderScheduler {
     required RescheduleTrigger trigger,
     LocalDate? todayOverride,
   }) async {
-    final now = clock.now();
+    final now = appNow();
     final today = todayOverride ?? LocalDate.fromDateTime(now);
 
     final lastRaw = await _db.getSetting(SettingsKeys.lastScheduledFor);

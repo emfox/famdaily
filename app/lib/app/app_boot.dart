@@ -75,7 +75,7 @@ class AppBoot {
       debugPrint('[boot] 通知初始化失败：$e');
     }
 
-    await _ensureSelfMember(db);
+    await ensureSelfMember(db);
 
     final scheduler = ReminderScheduler(db: db, notifications: notifications);
     final photoStore = PhotoStore();
@@ -100,7 +100,13 @@ class AppBoot {
   }
 
   /// 首次启动时建一个"我"。不做引导页——一个空列表比三步引导更快让人上手。
-  Future<void> _ensureSelfMember(AppDatabase db) async {
+  ///
+  /// 公开出来是给集成测试用的：测试从 `HomeShell(services:)` 起手时可以
+  /// 跳过 `_bootstrap` 里的插件初始化，但**不能**跳过这一步——跳过了
+  /// 首屏就是一个空壳，点「新建打卡项」只会弹"先加一个成员"。
+  /// 让测试和真机共用同一份"首次启动"逻辑，比在测试里自己 insert 一个
+  /// 名字更接近真实。
+  Future<void> ensureSelfMember(AppDatabase db) async {
     final members = await db.listMembers();
     if (members.isNotEmpty) {
       return;

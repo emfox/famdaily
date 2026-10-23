@@ -4,7 +4,6 @@
 /// 所有排序、分组、进度都由此决定，界面只管画。
 library;
 
-import 'package:clock/clock.dart';
 
 import '../../domain/model/checkin.dart';
 import '../../domain/model/checkin_row.dart';
@@ -17,6 +16,7 @@ import '../../domain/scheduling/scheduler.dart';
 import '../../data/db/app_database.dart' hide Member, Task, Checkin, Slot;
 import '../../data/db/app_database.dart' as rows show TaskRow;
 import '../../data/db/mappers.dart' show Mappers;
+import '../../app/test_clock.dart';
 
 /// 首页的两种排法。
 enum HomeLayout {
@@ -96,7 +96,7 @@ final class TodayService {
 
   /// 读某一天（默认今天）的一屏数据。
   Future<TodayView> load({LocalDate? date, DateTime? at}) async {
-    final moment = at ?? clock.now();
+    final moment = at ?? appNow();
     final today = date ?? LocalDate.fromDateTime(moment);
     final nowTime = LocalTime(moment.hour, moment.minute);
 
@@ -241,7 +241,7 @@ final class TodayService {
     required CheckinRecord record,
     required AppDatabase db,
   }) async {
-    final nowMs = clock.now().millisecondsSinceEpoch;
+    final nowMs = appNow().millisecondsSinceEpoch;
     await db.upsertCheckin(record, nowMs: nowMs);
   }
 
@@ -255,7 +255,7 @@ final class TodayService {
       date: row.date,
       slotIndex: row.slotIndex,
       today: today,
-      nowMs: clock.now().millisecondsSinceEpoch,
+      nowMs: appNow().millisecondsSinceEpoch,
     );
   }
 }

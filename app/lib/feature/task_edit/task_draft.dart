@@ -410,7 +410,7 @@ final class TaskDraft {
 
   /// 展开成最终 [Task]。
   ///
-  /// [id] 与 [nowMs] 由调用方给（页面用 `newId()` / `clock.now()`，测试用固定值）。
+  /// [id] 与 [nowMs] 由调用方给（页面用 `newId()` / `appNow()`，测试用固定值）。
   Task toTask({
     required String id,
     required String memberId,

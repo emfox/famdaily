@@ -10,12 +10,12 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
-import 'package:clock/clock.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'backup_data.dart';
+import '../../app/test_clock.dart';
 
 /// zip 里那个固定名字的 JSON。
 const String manifestEntryName = 'backup.json';
@@ -131,7 +131,7 @@ final class PlatformBackupGateway implements BackupFileGateway {
     final dir = await getTemporaryDirectory();
     // 每次导出建一个子目录：同名文件被覆盖过一次，分享出去的就可能是旧内容，
     // 而"备份文件是旧的"这种错用户根本发现不了。
-    final stamp = clock.now().toUtc().toIso8601String().replaceAll(':', '-');
+    final stamp = appNow().toUtc().toIso8601String().replaceAll(':', '-');
     final sub = Directory(p.join(dir.path, 'backup_$stamp'));
     await sub.create(recursive: true);
     final file = File(p.join(sub.path, fileName));

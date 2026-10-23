@@ -1,4 +1,3 @@
-import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 
 import '../../domain/model/member.dart';
@@ -6,6 +5,7 @@ import 'member_avatar.dart';
 import 'member_detail_page.dart';
 import 'member_edit_page.dart';
 import 'member_service.dart';
+import '../../app/test_clock.dart';
 
 /// 成员列表（ui-spec §5.1）。
 ///
@@ -69,7 +69,7 @@ class _MemberListPageState extends State<MemberListPage> {
     final ids = rows.map((r) => r.member.id).toList(growable: false);
     await widget.service.reorder(
       MemberService.moved(ids, from, to),
-      nowMs: clock.now().millisecondsSinceEpoch,
+      nowMs: appNow().millisecondsSinceEpoch,
     );
     await _load();
   }

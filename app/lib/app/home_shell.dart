@@ -53,6 +53,9 @@ class _HomeShellState extends State<HomeShell> {
 
   int? _memberCount;
 
+  /// 成员表改动的代数。递增即通知首页刷新。
+  int _memberRevision = 0;
+
   @override
   void initState() {
     super.initState();
@@ -72,7 +75,12 @@ class _HomeShellState extends State<HomeShell> {
       body: IndexedStack(
         index: _index,
         children: [
-          HomeScreen(services: widget.services),
+          // memberRevision：首页在 IndexedStack 里常驻，切回来不重建。
+          // 成员增删后靠这个计数把它叫醒，否则「谁做」的名单一直是旧的。
+          HomeScreen(
+            services: widget.services,
+            memberRevision: _memberRevision,
+          ),
           HistoryPage(
             service: _history,
             onOpenStats: () => unawaited(_openStats()),
@@ -124,6 +132,9 @@ class _HomeShellState extends State<HomeShell> {
     );
     // 成员可能被增删改名，回来无条件刷一次：这个数字不刷就是错的。
     await _refreshMemberCount();
+    if (mounted) {
+      setState(() => _memberRevision++);
+    }
   }
 
   Future<void> _openDebug() async {
