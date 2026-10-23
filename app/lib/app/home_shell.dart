@@ -12,6 +12,8 @@ import '../feature/home/home_screen.dart';
 import '../feature/members/member_list_page.dart';
 import '../feature/members/member_service.dart';
 import '../feature/settings/settings_page.dart';
+import '../feature/stats/stats_page.dart';
+import '../feature/stats/stats_service.dart';
 import 'debug_entry.dart';
 
 /// 主框架：底部三个 Tab（今日 / 历史 / 设置）。
@@ -42,6 +44,8 @@ class _HomeShellState extends State<HomeShell> {
     ),
   );
 
+  late final StatsService _stats = StatsService(widget.services.db);
+
   late final BackupService _backup = BackupService(
     db: widget.services.db,
     gateway: const PlatformBackupGateway(),
@@ -71,7 +75,7 @@ class _HomeShellState extends State<HomeShell> {
           HomeScreen(services: widget.services),
           HistoryPage(
             service: _history,
-            onOpenStats: null, // 统计页 P2 接
+            onOpenStats: () => unawaited(_openStats()),
           ),
           SettingsPage(
             services: widget.services,
@@ -105,6 +109,12 @@ class _HomeShellState extends State<HomeShell> {
           ),
         ],
       ),
+    );
+  }
+
+  Future<void> _openStats() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(builder: (_) => StatsPage(service: _stats)),
     );
   }
 
