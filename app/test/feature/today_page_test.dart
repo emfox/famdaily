@@ -47,9 +47,9 @@ void main() {
   setUp(() async {
     db = AppDatabase.forTesting(openTestConnection());
     service = TodayService(db);
-    await db.into(db.members).insert(
-      Mappers.memberToCompanion(_member('m1', '爷爷', 0)),
-    );
+    await db
+        .into(db.members)
+        .insert(Mappers.memberToCompanion(_member('m1', '爷爷', 0)));
   });
 
   tearDown(() async => db.close());
@@ -106,9 +106,9 @@ void main() {
   });
 
   testWidgets('成员视图按人分组，显示各自进度', (tester) async {
-    await db.into(db.members).insert(
-      Mappers.memberToCompanion(_member('m2', '小宝', 1)),
-    );
+    await db
+        .into(db.members)
+        .insert(Mappers.memberToCompanion(_member('m2', '小宝', 1)));
     await db.insertTask(_task('t1', 'm1', '降压药', 8), nowMs: _ts);
     await db.insertTask(_task('t2', 'm2', '早读', 7), nowMs: _ts);
 
@@ -171,10 +171,7 @@ void main() {
       ('t2', 7, 'makeup'),
       ('t3', 8, 'skipped'),
     ]) {
-      await db.insertTask(
-        _task(id, 'm1', 'n$h', h),
-        nowMs: _ts,
-      );
+      await db.insertTask(_task(id, 'm1', 'n$h', h), nowMs: _ts);
       await db.upsertCheckin(
         domain.CheckinRecord(
           id: 'c$id',
@@ -210,5 +207,37 @@ void main() {
     expect(find.byIcon(Icons.close), findsOneWidget);
     // 「没做」不许标红（ui-spec 的产品红线），这里靠文案确认它被归到已完成组
     expect(find.textContaining('没做'), findsOneWidget);
+  });
+
+  testWidgets('点行文字区走 tappedCircle: false（进详情），点圆圈走 true（打卡）', (tester) async {
+    await db.insertTask(_task('t1', 'm1', '早读', 7), nowMs: _ts);
+
+    final view = await service.load(at: DateTime(2025, 3, 1, 9, 0));
+    final taps = <bool>[];
+
+    await tester.pumpWidget(
+      _wrap(
+        TodayPage(
+          view: view,
+          layout: HomeLayout.timeline,
+          onLayoutChanged: (_) {},
+          onTapRow: (_, {required tappedCircle}) => taps.add(tappedCircle),
+          onNewTask: () {},
+          onRefresh: () async {},
+          loading: false,
+        ),
+      ),
+    );
+
+    // 点标题文字 → 文字区 → 详情
+    await tester.tap(find.text('早读'));
+    await tester.pump();
+    expect(taps, [false]);
+
+    // 点右边的状态圈 → 打卡。圆圈本身是 Container（不是 Icon），
+    // 所以按 InkResponse 找它——那是唯一响应"点圈"的地方。
+    await tester.tap(find.byType(InkResponse).first);
+    await tester.pump();
+    expect(taps, [false, true]);
   });
 }

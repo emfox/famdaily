@@ -14,6 +14,8 @@ import '../../domain/model/member.dart';
 import '../../domain/model/task.dart';
 import '../../domain/model/task_status.dart';
 import '../../domain/notification/window_policy.dart';
+import '../task_detail/task_detail_page.dart';
+import '../task_detail/task_detail_service.dart';
 import '../task_edit/task_edit_page.dart';
 import 'checkin_sheets.dart';
 import 'today_page.dart';
@@ -36,6 +38,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen>
     with WidgetsBindingObserver {
   late final TodayService _service = TodayService(widget.services.db);
+  late final TaskDetailService _detail = TaskDetailService(widget.services.db);
 
   TodayView _view = TodayView.empty;
   HomeLayout _layout = HomeLayout.timeline;
@@ -133,9 +136,10 @@ class _HomeScreenState extends State<HomeScreen>
   /// - 已结案 + 点圆圈 → 撤销（ui-spec："点已完成的勾 = 撤销"）
   /// - 已过时间 + 点圆圈 → 弹两个出口，**绝不直接打卡**（避免把"没做"记成"做了"）
   /// - 未到时间 + 点圆圈 → 直接记为准时
-  /// - 点整行文字 → 详情（P1 先什么都不做，P2 接详情页）
+  /// - 点整行文字 → 项目详情（ui-spec §4）
   Future<void> _onTapRow(CheckinRow row, {required bool tappedCircle}) async {
     if (!tappedCircle) {
+      await _openDetail(row.task.id);
       return;
     }
 
@@ -248,6 +252,48 @@ class _HomeScreenState extends State<HomeScreen>
         trigger: RescheduleTrigger.dataChanged,
       ),
     );
+  }
+
+  /// 打开某一项的详情（点行文字区进入）。
+  ///
+  /// 回来无条件刷一次：详情页里可能点了「编辑」，改了规则就得重读
+  /// 首页和重排提醒——从详情页往回传"脏没脏"再判断，比直接重读更容易错。
+  Future<void> _openDetail(String taskId) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => TaskDetailPage(
+          service: _detail,
+          taskId: taskId,
+          onEdit: (task) => unawaited(_editTask(task)),
+        ),
+      ),
+    );
+    if (mounted) {
+      await _afterChange();
+    }
+  }
+
+  Future<void> _editTask(Task task) async {
+    if (_members.isEmpty) {
+      // 成员被删光了也还能编辑名称/时间，只是"谁做"选不了。
+      _toast('没有成员可选，先加一个成员');
+      return;
+    }
+    // 编辑页只回 `bool`（保存了没），不回 Task——回传对象会让人以为
+    // 该拿它去写库，而写库已经在 onSave 里发生过了。
+    final saved = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => TaskEditPage.edit(
+          task: task,
+          members: _members,
+          onSave: _saveTask,
+        ),
+      ),
+    );
+    if (saved != true || !mounted) {
+      return;
+    }
+    await _afterChange();
   }
 
   /// 新建打卡项（ui-spec §2 三步式）。
