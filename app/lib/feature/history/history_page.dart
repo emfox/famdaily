@@ -196,7 +196,7 @@ class _WeekdayHeader extends StatelessWidget {
                 child: Text(
                   label,
                   style: theme.textTheme.labelSmall?.copyWith(
-                    color: theme.colorScheme.outline,
+                    color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
               ),
@@ -324,14 +324,14 @@ class _MonthSummaryBar extends StatelessWidget {
                 Text(
                   '还没有记录',
                   style: theme.textTheme.bodySmall?.copyWith(
-                    color: scheme.outline,
+                    color: scheme.onSurfaceVariant,
                   ),
                 )
               else
                 Text(
                   '共 ${summary.expected} 次',
                   style: theme.textTheme.bodySmall?.copyWith(
-                    color: scheme.outline,
+                    color: scheme.onSurfaceVariant,
                   ),
                 ),
             ],
@@ -381,7 +381,7 @@ class _RateRow extends StatelessWidget {
           width: 52,
           child: Text(
             label,
-            style: theme.textTheme.bodySmall?.copyWith(color: scheme.outline),
+            style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
           ),
         ),
         Expanded(
@@ -447,7 +447,7 @@ class _Legend extends StatelessWidget {
               Text(
                 label,
                 style: theme.textTheme.labelSmall?.copyWith(
-                  color: theme.colorScheme.outline,
+                  color: theme.colorScheme.onSurfaceVariant,
                 ),
               ),
             ],

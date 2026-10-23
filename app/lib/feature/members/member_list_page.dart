@@ -113,7 +113,7 @@ class _MemberListPageState extends State<MemberListPage> {
                       '还没有成员。先加一个「我」，再加家里人。',
                       textAlign: TextAlign.center,
                       style: theme.textTheme.bodyMedium?.copyWith(
-                        color: theme.colorScheme.outline,
+                        color: theme.colorScheme.onSurfaceVariant,
                       ),
                     ),
                   ),
@@ -135,7 +135,7 @@ class _Intro extends StatelessWidget {
         '成员不用登录、没有密码。\n他们只是一个名字和一个头像，'
         '用来说明「这件事给谁做」。',
         style: theme.textTheme.bodySmall?.copyWith(
-          color: theme.colorScheme.outline,
+          color: theme.colorScheme.onSurfaceVariant,
           height: 1.6,
         ),
       ),
@@ -172,7 +172,7 @@ class _MemberRow extends StatelessWidget {
       subtitle: Text(
         summary.taskCountLabel,
         style: theme.textTheme.bodySmall?.copyWith(
-          color: theme.colorScheme.outline,
+          color: theme.colorScheme.onSurfaceVariant,
         ),
       ),
       trailing: Row(

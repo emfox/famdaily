@@ -31,6 +31,7 @@
 |---|---|
 | [docs/requirements.zh_CN.md](docs/requirements.zh_CN.md) | 需求文档：功能、规则、场景、待定项 |
 | [docs/ui-spec.zh_CN.md](docs/ui-spec.zh_CN.md) | 界面描述：页面流程 + 框架图 + 状态规则 |
+| [docs/e2e-test-spec.zh_CN.md](docs/e2e-test-spec.zh_CN.md) | **端到端验收规格**：按 M3 规范的逐条可判定检查项（编号化，可勾选） |
 | [docs/architecture.zh_CN.md](docs/architecture.zh_CN.md) | 架构说明：App/网页分工、数据流、同步策略 |
 | [docs/tech-stack.zh_CN.md](docs/tech-stack.zh_CN.md) | 技术选型：框架、版本矩阵、分层、提醒实现 |
 

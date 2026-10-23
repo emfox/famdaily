@@ -305,7 +305,7 @@ class _SummaryTiles extends StatelessWidget {
                     Text(
                       label,
                       style: theme.textTheme.labelSmall?.copyWith(
-                        color: scheme.outline,
+                        color: scheme.onSurfaceVariant,
                       ),
                     ),
                   ],
@@ -343,7 +343,7 @@ class _ReadOnlyNotice extends StatelessWidget {
           Text(
             text,
             style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.outline,
+              color: theme.colorScheme.onSurfaceVariant,
             ),
           ),
         ],
@@ -421,7 +421,7 @@ class _HistoryTile extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.bodySmall?.copyWith(
-                        color: scheme.outline,
+                        color: scheme.onSurfaceVariant,
                       ),
                     ),
                   ],
@@ -498,7 +498,10 @@ class _Tag extends StatelessWidget {
       ),
       child: Text(
         text,
-        style: TextStyle(fontSize: 10, height: 1.4, color: color),
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+          height: 1.4,
+          color: color,
+        ),
       ),
     );
   }
@@ -525,7 +528,7 @@ class _EmptyDay extends StatelessWidget {
           Text(
             '这天没有安排',
             style: theme.textTheme.bodyMedium?.copyWith(
-              color: theme.colorScheme.outline,
+              color: theme.colorScheme.onSurfaceVariant,
             ),
           ),
         ],

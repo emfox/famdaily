@@ -334,11 +334,11 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage> {
                     ),
                   ),
                 if (!v.enabled)
-                  const Padding(
-                    padding: EdgeInsets.fromLTRB(20, 8, 20, 0),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
                     child: Text(
                       '提醒总开关关着，下面这些先不起作用。',
-                      style: TextStyle(fontSize: 12, height: 1.5),
+                      style: theme.textTheme.bodySmall?.copyWith(height: 1.5),
                     ),
                   ),
               ],

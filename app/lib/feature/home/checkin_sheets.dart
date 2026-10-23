@@ -41,7 +41,7 @@ Future<CheckinChoice?> showOverdueSheet(BuildContext context, CheckinRow row) {
             Text(
               '${_hhmm(row)} · 这件事最后怎么样？',
               style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.outline,
+                color: theme.colorScheme.onSurfaceVariant,
               ),
             ),
             const SizedBox(height: 20),
@@ -279,7 +279,7 @@ class _PhotoPreview extends StatelessWidget {
               height: 120,
               alignment: Alignment.center,
               color: scheme.surfaceContainerHighest,
-              child: Text('这张图读不出来', style: TextStyle(color: scheme.outline)),
+              child: Text('这张图读不出来', style: TextStyle(color: scheme.onSurfaceVariant)),
             ),
           ),
         ),
@@ -352,7 +352,7 @@ class _ChoiceCard extends StatelessWidget {
                       subtitle,
                       style: Theme.of(
                         context,
-                      ).textTheme.bodySmall?.copyWith(color: scheme.outline),
+                      ).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
                     ),
                   ],
                 ),

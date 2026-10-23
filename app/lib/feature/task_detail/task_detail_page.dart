@@ -95,7 +95,7 @@ class _TaskDetailPageState extends State<TaskDetailPage> {
               : Text(
                   '这个打卡项已经不在了',
                   style: theme.textTheme.bodyMedium?.copyWith(
-                    color: theme.colorScheme.outline,
+                    color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
         ),
@@ -132,7 +132,7 @@ class _TaskDetailPageState extends State<TaskDetailPage> {
               child: Text(
                 detail.headline,
                 style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.outline,
+                  color: theme.colorScheme.onSurfaceVariant,
                 ),
               ),
             ),
@@ -155,7 +155,7 @@ class _TaskDetailPageState extends State<TaskDetailPage> {
             Text(
               '只列最近 ${TaskDetailService.recentDays} 天；更早的翻历史。',
               style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.outline,
+                color: theme.colorScheme.onSurfaceVariant,
               ),
             ),
             if (widget.onStatusChange != null || widget.onDelete != null) ...[
@@ -325,7 +325,7 @@ class _Header extends StatelessWidget {
                     ? '疗程：${RuleText.course(task.course)}'
                     : '疗程：${RuleText.course(task.course)} · $progress',
                 style: theme.textTheme.bodySmall?.copyWith(
-                  color: scheme.outline,
+                  color: scheme.onSurfaceVariant,
                 ),
               ),
               if (task.note?.trim().isNotEmpty ?? false) ...[
@@ -365,15 +365,15 @@ class _StatusChip extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     // 「进行中」是默认态，标出来只会让每一行都多一个标签。
     if (task.deletedAtMs != null) {
-      return _chip(scheme, '已删除');
+      return _chip(context, scheme, '已删除');
     }
     return switch (task.status) {
       TaskStatus.active => const SizedBox.shrink(),
-      final s => _chip(scheme, s.labelZh),
+      final s => _chip(context, scheme, s.labelZh),
     };
   }
 
-  Widget _chip(ColorScheme scheme, String text) {
+  Widget _chip(BuildContext context, ColorScheme scheme, String text) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
       decoration: BoxDecoration(
@@ -382,7 +382,10 @@ class _StatusChip extends StatelessWidget {
       ),
       child: Text(
         text,
-        style: TextStyle(fontSize: 10, height: 1.4, color: scheme.outline),
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+          height: 1.4,
+          color: scheme.onSurfaceVariant,
+        ),
       ),
     );
   }
@@ -433,7 +436,7 @@ class _RateTiles extends StatelessWidget {
                     Text(
                       label,
                       style: theme.textTheme.labelSmall?.copyWith(
-                        color: scheme.outline,
+                        color: scheme.onSurfaceVariant,
                       ),
                     ),
                   ],
@@ -473,7 +476,7 @@ class _DayGroup extends StatelessWidget {
               Text(
                 day.label(today),
                 style: theme.textTheme.labelMedium?.copyWith(
-                  color: theme.colorScheme.outline,
+                  color: theme.colorScheme.onSurfaceVariant,
                 ),
               ),
               const SizedBox(width: 8),
@@ -689,7 +692,7 @@ class _EmptyRecords extends StatelessWidget {
           Text(
             '最近还没排到这项',
             style: theme.textTheme.bodyMedium?.copyWith(
-              color: theme.colorScheme.outline,
+              color: theme.colorScheme.onSurfaceVariant,
             ),
           ),
         ],

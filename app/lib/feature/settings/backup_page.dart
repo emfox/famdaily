@@ -150,7 +150,7 @@ class _BackupPageState extends State<BackupPage> {
               '备份是保险，不是日常。存到你自己的地方（网盘、邮箱、电脑），'
               '换手机或者重装的时候能原样搬回来。',
               style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.outline,
+                color: theme.colorScheme.onSurfaceVariant,
                 height: 1.6,
               ),
             ),
@@ -206,7 +206,7 @@ class _BackupPageState extends State<BackupPage> {
             child: Text(
               '格式是能直接打开看的 JSON，不是加密黑盒。',
               style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.outline,
+                color: theme.colorScheme.onSurfaceVariant,
               ),
             ),
           ),
@@ -272,7 +272,7 @@ class _SectionHeader extends StatelessWidget {
       child: Text(
         text,
         style: theme.textTheme.labelLarge?.copyWith(
-          color: theme.colorScheme.outline,
+          color: theme.colorScheme.onSurfaceVariant,
         ),
       ),
     );

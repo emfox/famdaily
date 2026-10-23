@@ -56,7 +56,7 @@ class TodayPage extends StatelessWidget {
                   : '${view.now!.hour.toString().padLeft(2, '0')}:'
                         '${view.now!.minute.toString().padLeft(2, '0')}',
               style: theme.textTheme.labelMedium?.copyWith(
-                color: theme.colorScheme.outline,
+                color: theme.colorScheme.onSurfaceVariant,
               ),
             ),
             Text('今天', style: theme.textTheme.headlineSmall),
@@ -441,51 +441,64 @@ class _StatusMark extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkResponse(
-      onTap: onTap,
-      radius: 22,
-      child: SizedBox(
-        width: 44,
-        height: 44,
-        child: Center(
-          child: switch (visual) {
-            // 实心绿：准时
-            CheckinVisual.doneOnTime => Icon(
-              Icons.check_circle,
-              color: style.foreground,
-              size: 26,
-            ),
-            // 空心绿：补卡
-            CheckinVisual.doneMakeup => Container(
-              width: 24,
-              height: 24,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(color: style.foreground, width: 2),
+    // 48×48 是 Material 的触控下限（约 9mm）。这里曾经是 44，
+    // 差 4dp 在手指上就是"点了没反应"——尤其对老人。
+    return Semantics(
+      button: true,
+      // TalkBack 只会念"按钮"，不说它是干什么的。状态标记是本 App
+      // 最高频的控件，必须自带说明。
+      label: switch (visual) {
+        CheckinVisual.doneOnTime || CheckinVisual.doneMakeup => '撤销打卡',
+        CheckinVisual.skipped => '这条记为没做，点一下可以改',
+        CheckinVisual.overdue => '已过时间，点一下选择做了什么',
+        _ => '标记为完成',
+      },
+      child: InkResponse(
+        onTap: onTap,
+        radius: 24,
+        child: SizedBox(
+          width: 48,
+          height: 48,
+          child: Center(
+            child: switch (visual) {
+              // 实心绿：准时
+              CheckinVisual.doneOnTime => Icon(
+                Icons.check_circle,
+                color: style.foreground,
+                size: 26,
               ),
-              child: Icon(Icons.check, size: 14, color: style.foreground),
-            ),
-            // 灰叉：没做
-            CheckinVisual.skipped => Icon(
-              Icons.close,
-              color: style.foreground,
-              size: 22,
-            ),
-            // 空心圆：待做 / 已过时间
-            _ => Container(
-              width: 24,
-              height: 24,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: visual == CheckinVisual.overdue
-                      ? style.foreground
-                      : Theme.of(context).colorScheme.outlineVariant,
-                  width: 2,
+              // 空心绿：补卡
+              CheckinVisual.doneMakeup => Container(
+                width: 24,
+                height: 24,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(color: style.foreground, width: 2),
+                ),
+                child: Icon(Icons.check, size: 14, color: style.foreground),
+              ),
+              // 灰叉：没做
+              CheckinVisual.skipped => Icon(
+                Icons.close,
+                color: style.foreground,
+                size: 22,
+              ),
+              // 空心圆：待做 / 已过时间
+              _ => Container(
+                width: 24,
+                height: 24,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: visual == CheckinVisual.overdue
+                        ? style.foreground
+                        : Theme.of(context).colorScheme.outlineVariant,
+                    width: 2,
+                  ),
                 ),
               ),
-            ),
-          },
+            },
+          ),
         ),
       ),
     );
@@ -521,7 +534,7 @@ class _EmptyState extends StatelessWidget {
           '给家人加一件每天要做的小事',
           textAlign: TextAlign.center,
           style: theme.textTheme.bodyMedium?.copyWith(
-            color: theme.colorScheme.outline,
+            color: theme.colorScheme.onSurfaceVariant,
           ),
         ),
         const SizedBox(height: 24),

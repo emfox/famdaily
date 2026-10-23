@@ -190,7 +190,7 @@ class _SettingsPageState extends State<SettingsPage> {
                         Text(
                           '${widget.memberCount} 位',
                           style: theme.textTheme.bodySmall?.copyWith(
-                            color: theme.colorScheme.outline,
+                            color: theme.colorScheme.onSurfaceVariant,
                           ),
                         ),
                       const Icon(Icons.chevron_right, size: 18),
@@ -225,12 +225,15 @@ class _SettingsPageState extends State<SettingsPage> {
                   subtitle: const Text('0.1.0（开发中）'),
                   onTap: _onVersionTap,
                 ),
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(20, 8, 20, 0),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
                   child: Text(
                     'Famdaily 只做一件事：让家里那些「每天都要做的小事」'
                     '有人记得、有人看见。\n不排名、不加分、不催命。',
-                    style: TextStyle(fontSize: 12, height: 1.6),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      height: 1.6,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
                   ),
                 ),
               ],
@@ -252,7 +255,7 @@ class _SectionHeader extends StatelessWidget {
       child: Text(
         text,
         style: theme.textTheme.labelLarge?.copyWith(
-          color: theme.colorScheme.outline,
+          color: theme.colorScheme.onSurfaceVariant,
         ),
       ),
     );

@@ -193,25 +193,28 @@ class _TaskEditPageState extends State<TaskEditPage> {
     final theme = Theme.of(context);
 
     return PopScope(
-      // 有未保存的输入时先问一句，避免误触返回键丢掉三步的成果。
-      canPop: _step == 0 || _isEditing,
+      // canPop 恒为 false：返回键自己接管。
+      //
+      // 之前是"第 2/3 步按返回直接问『还没保存』"，可顶栏那个 ‹ 明明是
+      // 回上一步——同一个"返回"，两个入口给你两个结果，用户没法建立预期。
+      // 现在的口径：**返回 = 退一层**，退到第 1 步了再按才问要不要放弃。
+      canPop: false,
       onPopInvokedWithResult: (bool didPop, Object? _) async {
         if (didPop) {
           return;
         }
-        // 回调拿到的 context 不是 State.context，lint 要求用回调参数自己的
-        // mounted 判断（这个 context 是 PopScope 所在元素，语义正确）。
-        final leave = await _confirmDiscard();
-        if (!leave || !context.mounted) {
+        if (_step > 0) {
+          setState(() => _step -= 1);
           return;
         }
+        // 第 1 步：模板都没选，什么都没填，直接退，不必问。
         Navigator.of(context).pop();
       },
       child: Scaffold(
         appBar: AppBar(
           leadingWidth: 64,
           leading: _step == 0
-              ? const CloseButton()
+              ? CloseButton(onPressed: () => Navigator.of(context).pop())
               : IconButton(
                   icon: const Icon(Icons.chevron_left),
                   tooltip: '上一步',
@@ -239,7 +242,7 @@ class _TaskEditPageState extends State<TaskEditPage> {
                 Text(
                   '第 ${_step + 1} / 3 步',
                   style: theme.textTheme.labelSmall?.copyWith(
-                    color: theme.colorScheme.outline,
+                    color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
               ],
@@ -300,27 +303,6 @@ class _TaskEditPageState extends State<TaskEditPage> {
         );
     }
   }
-
-  Future<bool> _confirmDiscard() async {
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('还没保存'),
-        content: const Text('现在退出去，刚填的内容就没了。'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('接着填'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('不要了'),
-          ),
-        ],
-      ),
-    );
-    return result ?? false;
-  }
 }
 
 /// 置底固定的自然语言预览（ui-spec §2.3：「预览：爷爷 · 降压药 …」）。
@@ -359,7 +341,7 @@ class _PreviewBar extends StatelessWidget {
           Text(
             '预览',
             style: theme.textTheme.labelSmall?.copyWith(
-              color: scheme.outline,
+              color: scheme.onSurfaceVariant,
             ),
           ),
           const SizedBox(height: 4),

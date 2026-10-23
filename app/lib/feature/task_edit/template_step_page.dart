@@ -41,7 +41,7 @@ class TemplateStepPage extends StatelessWidget {
             child: Text(
               group.titleZh,
               style: theme.textTheme.labelLarge?.copyWith(
-                color: theme.colorScheme.outline,
+                color: theme.colorScheme.onSurfaceVariant,
               ),
             ),
           ),

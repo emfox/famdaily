@@ -67,7 +67,7 @@ class _InfoStepPageState extends State<InfoStepPage> {
               isDense: true,
               border: InputBorder.none,
               hintStyle: theme.textTheme.bodyLarge?.copyWith(
-                color: theme.colorScheme.outline,
+                color: theme.colorScheme.onSurfaceVariant,
               ),
             ),
             style: theme.textTheme.bodyLarge,
@@ -88,7 +88,7 @@ class _InfoStepPageState extends State<InfoStepPage> {
               Text(
                 '谁做',
                 style: theme.textTheme.bodyMedium?.copyWith(
-                  color: theme.colorScheme.outline,
+                  color: theme.colorScheme.onSurfaceVariant,
                 ),
               ),
               if (draft.blocker == TaskEditBlocker.member) ...[
@@ -148,7 +148,7 @@ class _InfoStepPageState extends State<InfoStepPage> {
               Text(
                 '图标',
                 style: theme.textTheme.bodyMedium?.copyWith(
-                  color: theme.colorScheme.outline,
+                  color: theme.colorScheme.onSurfaceVariant,
                 ),
               ),
               const SizedBox(height: 10),
@@ -181,7 +181,7 @@ class _InfoStepPageState extends State<InfoStepPage> {
               Text(
                 '说一句',
                 style: theme.textTheme.bodyMedium?.copyWith(
-                  color: theme.colorScheme.outline,
+                  color: theme.colorScheme.onSurfaceVariant,
                 ),
               ),
               const SizedBox(height: 4),
@@ -190,7 +190,7 @@ class _InfoStepPageState extends State<InfoStepPage> {
               Text(
                 '给打卡的人看的一句话，比如「白色药片 2 粒，饭后半小时」',
                 style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.outline,
+                  color: theme.colorScheme.onSurfaceVariant,
                 ),
               ),
               TextField(
@@ -233,7 +233,7 @@ class _FieldRow extends StatelessWidget {
           child: Text(
             label,
             style: theme.textTheme.bodyMedium?.copyWith(
-              color: theme.colorScheme.outline,
+              color: theme.colorScheme.onSurfaceVariant,
             ),
           ),
         ),

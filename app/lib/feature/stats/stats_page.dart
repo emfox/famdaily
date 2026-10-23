@@ -104,7 +104,7 @@ class _StatsPageState extends State<StatsPage> {
                     '完成率 =（准时 + 补卡）/ 该做；准时率 = 准时 / 该做。\n'
                     '没做的会计入分母，但不会把你的数字"抹掉"。',
                     style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.outline,
+                      color: theme.colorScheme.onSurfaceVariant,
                       height: 1.6,
                     ),
                   ),
@@ -193,7 +193,7 @@ class _BigRate extends StatelessWidget {
         Text(
           label,
           style: theme.textTheme.labelMedium?.copyWith(
-            color: theme.colorScheme.outline,
+            color: theme.colorScheme.onSurfaceVariant,
           ),
         ),
         const SizedBox(height: 2),
@@ -333,7 +333,7 @@ class _SectionHeader extends StatelessWidget {
       child: Text(
         text,
         style: theme.textTheme.labelLarge?.copyWith(
-          color: theme.colorScheme.outline,
+          color: theme.colorScheme.onSurfaceVariant,
         ),
       ),
     );

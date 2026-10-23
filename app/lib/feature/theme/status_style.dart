@@ -45,8 +45,12 @@ final class StatusStyle {
         border: scheme.primary.withValues(alpha: 0.18),
       ),
       // 没做：米白 + 灰，整体淡化，不标红。
+      //
+      // 灰用 onSurfaceVariant 而不是 outline：outline 是给**描边**用的，
+      // 它在浅色 surface 上只有 4.29:1，当正文色不达标（WCAG AA 要 4.5）。
+      // 这个坑正是核查 e2e 规格 G-10 时量出来的。
       CheckinVisual.skipped => StatusStyle(
-        foreground: scheme.outline,
+        foreground: scheme.onSurfaceVariant,
         background: scheme.surfaceContainerLow,
         border: scheme.outlineVariant.withValues(alpha: 0.4),
       ),

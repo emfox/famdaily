@@ -92,7 +92,7 @@ class _TimeStepPageState extends State<TimeStepPage> {
           subtitle: Text(
             '15 分钟没打卡会再催一次',
             style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.outline,
+              color: theme.colorScheme.onSurfaceVariant,
             ),
           ),
         ),
@@ -127,7 +127,8 @@ class _TabBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     return Container(
       padding: const EdgeInsets.all(3),
       decoration: BoxDecoration(
@@ -151,8 +152,7 @@ class _TabBar extends StatelessWidget {
                   child: Text(
                     t.labelZh,
                     textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 13,
+                    style: theme.textTheme.labelLarge?.copyWith(
                       fontWeight: t == current
                           ? FontWeight.w600
                           : FontWeight.w400,
@@ -243,7 +243,7 @@ class _SeveralEditor extends StatelessWidget {
             subtitle: Text(
               '按吃饭时间自动定，饭前饭后可调',
               style: theme.textTheme.bodySmall?.copyWith(
-                color: scheme.outline,
+                color: scheme.onSurfaceVariant,
               ),
             ),
           ),
@@ -393,7 +393,7 @@ class _CustomEditor extends StatelessWidget {
                 child: Text(
                   '一天最多 $maxPointsPerDay 次',
                   style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.outline,
+                    color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
               ),
@@ -482,7 +482,8 @@ class _TimeButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     return TextButton(
       onPressed: () async {
         final picked = await _pickTime(context, time);
@@ -498,10 +499,10 @@ class _TimeButton extends StatelessWidget {
       ),
       child: Text(
         time.toString(),
-        style: const TextStyle(
-          fontSize: 16,
+        style: theme.textTheme.bodyLarge?.copyWith(
           fontWeight: FontWeight.w600,
-          fontFeatures: [FontFeature.tabularFigures()],
+          // 等宽数字：时间在列表里上下对齐，不然 7:30 和 12:30 的冒号错位。
+          fontFeatures: const [FontFeature.tabularFigures()],
         ),
       ),
     );
@@ -648,7 +649,8 @@ class _WeekdayDot extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     return InkWell(
       onTap: onTap,
       customBorder: const CircleBorder(),
@@ -665,8 +667,7 @@ class _WeekdayDot extends StatelessWidget {
         ),
         child: Text(
           label,
-          style: TextStyle(
-            fontSize: 13,
+          style: theme.textTheme.labelLarge?.copyWith(
             color: selected ? scheme.onPrimary : scheme.onSurfaceVariant,
           ),
         ),
@@ -694,7 +695,7 @@ class _IntervalEditor extends StatelessWidget {
         const SizedBox(height: 2),
         Text(
           '在上面那些时刻之外，再加一串固定间隔的提醒',
-          style: theme.textTheme.bodySmall?.copyWith(color: scheme.outline),
+          style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
         ),
         const SizedBox(height: 8),
         _StepperRow(
@@ -812,7 +813,7 @@ class _CourseEditor extends StatelessWidget {
               '到 ${course.end!.month}/${course.end!.day} 结束，'
               '到期自动归档，记录都留着',
               style: theme.textTheme.bodySmall?.copyWith(
-                color: scheme.outline,
+                color: scheme.onSurfaceVariant,
               ),
             ),
           ),
@@ -877,7 +878,7 @@ class _StepperRow extends StatelessWidget {
         Flexible(
           child: Text(
             value == 0 && zeroHint.isNotEmpty ? zeroHint : suffix,
-            style: theme.textTheme.bodySmall?.copyWith(color: scheme.outline),
+            style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
           ),
         ),
       ],
@@ -943,7 +944,7 @@ class _ExpandableCard extends StatelessWidget {
                     child: Text(
                       subtitle,
                       style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.outline,
+                        color: theme.colorScheme.onSurfaceVariant,
                       ),
                       overflow: TextOverflow.ellipsis,
                     ),

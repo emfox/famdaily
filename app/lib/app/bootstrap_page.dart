@@ -75,7 +75,7 @@ class _BootstrapPageState extends State<BootstrapPage> {
                     Text(
                       '把该提醒的都排好',
                       style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.outline,
+                        color: theme.colorScheme.onSurfaceVariant,
                       ),
                     ),
                   ],

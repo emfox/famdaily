@@ -131,14 +131,14 @@ class _MemberEditPageState extends State<MemberEditPage> {
           Text(
             '选个头像',
             style: theme.textTheme.labelLarge?.copyWith(
-              color: theme.colorScheme.outline,
+              color: theme.colorScheme.onSurfaceVariant,
             ),
           ),
           const SizedBox(height: 4),
           Text(
             '不选也行，会用名字的第一个字自动生成',
             style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.outline,
+              color: theme.colorScheme.onSurfaceVariant,
             ),
           ),
           const SizedBox(height: 12),
@@ -170,8 +170,7 @@ class _MemberEditPageState extends State<MemberEditPage> {
                 }),
                 child: Text(
                   _preview.initial,
-                  style: TextStyle(
-                    fontSize: 20,
+                  style: theme.textTheme.titleLarge?.copyWith(
                     fontWeight: FontWeight.w600,
                     color: MemberAvatars.fallbackForeground(_preview),
                   ),

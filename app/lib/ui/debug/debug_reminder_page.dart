@@ -139,7 +139,7 @@ class _DebugReminderPageState extends State<DebugReminderPage> {
             Text(
               '还没有槽位。先去建一个打卡项目，再回来点重排。',
               style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.outline,
+                color: theme.colorScheme.onSurfaceVariant,
               ),
             )
           else
@@ -189,7 +189,7 @@ class _ResultCard extends StatelessWidget {
                       child: Text(
                         k,
                         style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.outline,
+                          color: theme.colorScheme.onSurfaceVariant,
                         ),
                       ),
                     ),

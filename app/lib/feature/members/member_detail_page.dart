@@ -163,7 +163,7 @@ class _MemberDetailPageState extends State<MemberDetailPage> {
                       MemberService.headline(_summary!, _stats!),
                       textAlign: TextAlign.center,
                       style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.outline,
+                        color: theme.colorScheme.onSurfaceVariant,
                       ),
                     ),
                   const SizedBox(height: 28),
@@ -177,7 +177,7 @@ class _MemberDetailPageState extends State<MemberDetailPage> {
                         Text(
                           _summary?.taskCountLabel ?? '',
                           style: theme.textTheme.bodySmall?.copyWith(
-                            color: theme.colorScheme.outline,
+                            color: theme.colorScheme.onSurfaceVariant,
                           ),
                         ),
                         const Icon(Icons.chevron_right, size: 18),
