@@ -72,6 +72,34 @@ void main() {
       expect(d.timeTab, TimeTab.once);
     });
 
+    test('applyTemplate 与 fromTemplate 结果一致（回归：曾漏了饭后偏移）', () {
+      // 曾经 applyTemplate 自己写了一份展开逻辑，少加了 offsetMinutes，
+      // 直接从 UI 走「选模板」建出来的药是 7:30/12:00/18:30 而不是 8:00/12:30/19:00。
+      // 现在两者共用 TaskDraft.fromTemplate，这条守住"别再写成两份"。
+      for (final t in TemplateLibrary.all) {
+        final viaFactory = TaskDraft.fromTemplate(t);
+        final viaApply = TaskDraft()..applyTemplate(t);
+        expect(
+          viaApply.timePoints.map((e) => e.toString()),
+          viaFactory.timePoints.map((e) => e.toString()),
+          reason: t.id,
+        );
+        expect(viaApply.followMeals, viaFactory.followMeals, reason: t.id);
+        expect(viaApply.iconId, viaFactory.iconId, reason: t.id);
+        expect(viaApply.timeTab, viaFactory.timeTab, reason: t.id);
+      }
+    });
+
+    test('换模板不会把用户已经打好的名字清掉', () {
+      final d = TaskDraft.fromTemplate(TemplateLibrary.byId('medicine')!)
+        ..name = '降压药';
+      d.applyTemplate(TemplateLibrary.byId('rope')!);
+      expect(d.name, '降压药');
+      // 时间规则要跟着新模板走
+      expect(d.timePoints.single.toString(), '20:00');
+      expect(d.followMeals, isFalse);
+    });
+
     test('空白模板 -> 20:00 一个时刻', () {
       final d = TaskDraft.fromTemplate(TaskTemplate.blank);
       expect(d.name, isEmpty);
@@ -274,18 +302,20 @@ void main() {
   group('预览文案', () {
     test('一天多次会说次数和时刻', () {
       final d = TaskDraft.fromTemplate(TemplateLibrary.byId('water')!);
-      expect(d.describeTime(), '每天 5 次 每天 9:00 / 11:00 / 14:00 / 16:00 / 19:00');
+      expect(
+        d.describeTime(),
+        '每天 · 每天 5 次\n9:00 / 11:00 / 14:00 / 16:00 / 19:00',
+      );
     });
 
     test('一次说"每天 时刻"', () {
       final d = TaskDraft.fromTemplate(TemplateLibrary.byId('rope')!);
-      expect(d.describeTime(), '每天 每天 20:00');
+      expect(d.describeTime(), '每天 20:00');
     });
 
     test('跟三餐走会直说', () {
       final d = TaskDraft.fromTemplate(TemplateLibrary.byId('medicine')!);
-      expect(d.describeTime(), contains('跟随三餐'));
-      expect(d.describeTime(), contains('8:00 / 12:30 / 19:00'));
+      expect(d.describeTime(), '每天跟随三餐（饭后 30 分）\n8:00 / 12:30 / 19:00');
     });
 
     test('重复规则说人话：工作日 / 每周一三五 / 每 2 天 / 每月 1、15 号', () {

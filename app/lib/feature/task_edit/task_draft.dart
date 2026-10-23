@@ -272,30 +272,44 @@ final class TaskDraft {
     timeTab = TimeTab.several;
   }
 
-  /// 选完模板后回填图标（模板切换时用）。
-  void applyTemplate(TaskTemplate t) {
-    templateId = t.id;
-    if (name.isEmpty || name == _previousTemplateName) {
-      name = t.name;
-    }
-    if (note.isEmpty || note == _previousTemplateNote) {
-      note = t.note ?? '';
-    }
-    _iconId = null;
-    _tplIcon = t.iconId;
-    repeat = t.repeat;
-    course = t.course;
-    followMeals = false;
-    mealSelection = {...MealAnchor.values};
-    _mealAnchors = {};
-    _timePoints = [...t.timeRule.timesOn(_anyDay)];
-    timeTab = _timePoints.length == 1 ? TimeTab.once : TimeTab.custom;
-    _previousTemplateName = t.name;
-    _previousTemplateNote = t.note ?? '';
+  /// 换成另一个模板（用户在第 1 步反悔 / 首页直接点某个模板）。
+  ///
+  /// 这里把 [other] 的全部字段搬过来，而**不重新实现一遍模板展开**——
+  /// 之前两处各写一份，结果 `applyTemplate` 少了"三餐 + 偏移"，
+  /// 用户走 UI 建出来的药是"饭点整吃"。一份实现只有一个真相。
+  void adopt(TaskDraft other) {
+    templateId = other.templateId;
+    name = other.name;
+    note = other.note;
+    _iconId = other._iconId;
+    _tplIcon = other._tplIcon;
+    repeat = other.repeat;
+    course = other.course;
+    reminderEnabled = other.reminderEnabled;
+    followMeals = other.followMeals;
+    followMealOffsetMinutes = other.followMealOffsetMinutes;
+    mealSelection = {...other.mealSelection};
+    _mealAnchors = {...other._mealAnchors};
+    _timePoints = [...other._timePoints];
+    timeTab = other.timeTab;
   }
 
-  String _previousTemplateName = '';
-  String _previousTemplateNote = '';
+  /// 从模板重置整个草稿（保留"谁做"和已有的名字之外的输入都会丢）。
+  void applyTemplate(TaskTemplate t) {
+    final filled = TaskDraft.fromTemplate(t);
+    // 用户已经手填的名字/说明优先保留，别因为换模板把字打没了。
+    final keepName = name.trim().isNotEmpty;
+    final keepNote = note.trim().isNotEmpty;
+    final keptName = name;
+    final keptNote = note;
+    adopt(filled);
+    if (keepName) {
+      name = keptName;
+    }
+    if (keepNote) {
+      note = keptNote;
+    }
+  }
 
   // ---------------------------------------------------------------------
   // 校验与产出
@@ -430,14 +444,22 @@ final class TaskDraft {
         ? times.first.toString()
         : times.map((t) => _hm(t)).join(' / ');
 
-    final countPart = followMeals
-        ? '跟随三餐'
-        : times.length == 1
-        ? '每天'
-        : '每天 ${times.length} 次';
-
-    final dayPart = describeRepeat();
-    final base = '$countPart $dayPart $timePart';
+    // 「跟随三餐」和「每天 N 次」是这个组合的**同一件事**的两种说法，
+    // 不能并列写（"有 N 个时刻"本来就是"跟三餐"的结果）。
+    final String base;
+    if (followMeals) {
+      final offset = followMealOffsetMinutes;
+      final offsetText = offset == 0
+          ? ''
+          : offset > 0
+          ? '（饭后 $offset 分）'
+          : '（饭前 ${-offset} 分）';
+      base = '每天跟随三餐$offsetText\n$timePart';
+    } else if (times.length == 1) {
+      base = '${describeRepeat()} $timePart';
+    } else {
+      base = '${describeRepeat()} · 每天 ${times.length} 次\n$timePart';
+    }
     if (!hasIntervalRule) {
       return base;
     }

@@ -5,12 +5,16 @@ import 'package:flutter/material.dart';
 
 import '../../app/app_boot.dart';
 import '../../app/uuid.dart';
-import '../../data/db/app_database.dart';
+import '../../data/db/app_database.dart' hide Member, Task, Checkin, Slot;
 import '../../domain/model/checkin.dart';
 import '../../domain/model/checkin_row.dart';
 import '../../domain/model/checkin_state.dart';
 import '../../domain/model/local_date.dart';
+import '../../domain/model/member.dart';
+import '../../domain/model/task.dart';
+import '../../domain/model/task_status.dart';
 import '../../domain/notification/window_policy.dart';
+import '../task_edit/task_edit_page.dart';
 import 'checkin_sheets.dart';
 import 'today_page.dart';
 import 'today_service.dart';
@@ -35,6 +39,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   TodayView _view = TodayView.empty;
   HomeLayout _layout = HomeLayout.timeline;
+  List<Member> _members = const [];
   bool _loading = true;
   LocalDate _lastKnownDay = LocalDate.fromDateTime(clock.now());
 
@@ -104,8 +109,15 @@ class _HomeScreenState extends State<HomeScreen>
       if (!mounted) {
         return;
       }
+      // 成员列表随首页一起读：新建表单要用它做"谁做"的选择，
+      // 单独再查一次只会多一次往返，还得自己处理两者不同步。
+      final members = await widget.services.db.listMembers();
+      if (!mounted) {
+        return;
+      }
       setState(() {
         _view = view;
+        _members = members;
         _lastKnownDay = view.date ?? _lastKnownDay;
       });
     } finally {
@@ -238,6 +250,52 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
+  /// 新建打卡项（ui-spec §2 三步式）。
+  Future<void> _newTask() async {
+    if (_members.isEmpty) {
+      _toast('先加一个成员，才能给他安排打卡');
+      return;
+    }
+    final created = await Navigator.of(context).push<Task>(
+      MaterialPageRoute(
+        builder: (_) => TaskEditPage(
+          members: _members,
+          onSave: _saveTask,
+        ),
+      ),
+    );
+    if (created == null || !mounted) {
+      return;
+    }
+    await _afterChange();
+    if (mounted) {
+      _toast('已加上「${created.name}」');
+    }
+  }
+
+  /// 表单里点「创建 / 保存」时落到库里的动作。
+  ///
+  /// 新建走 insert，编辑走 update——用 [Task.createdAtMs] 是否等于
+  /// `updatedAtMs` 判断不可靠，所以这里直接查一次库看有没有这行。
+  Future<void> _saveTask(Task task) async {
+    final nowMs = clock.now().millisecondsSinceEpoch;
+    final existing = await widget.services.db.findTask(task.id);
+    if (existing == null) {
+      await widget.services.db.insertTask(task, nowMs: nowMs);
+    } else {
+      await widget.services.db.updateTask(task, nowMs: nowMs);
+    }
+    // 规则变了，槽位要重算；数据变了也顺带把提醒重排一次
+    // （在 _afterChange 里做，这里只保证落库）。
+    if (task.status != TaskStatus.active) {
+      await widget.services.db.setTaskStatus(
+        task.id,
+        task.status,
+        nowMs: nowMs,
+      );
+    }
+  }
+
   void _toast(String message) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -252,7 +310,7 @@ class _HomeScreenState extends State<HomeScreen>
       onLayoutChanged: (l) => unawaited(_setLayout(l)),
       onTapRow: (row, {required tappedCircle}) =>
           unawaited(_onTapRow(row, tappedCircle: tappedCircle)),
-      onNewTask: () => _toast('新建打卡项：下一步做'),
+      onNewTask: () => unawaited(_newTask()),
       onRefresh: () async {
         await _load(silent: true);
         await widget.services.scheduler.reschedule(
