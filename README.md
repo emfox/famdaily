@@ -32,6 +32,7 @@
 | [docs/requirements.zh_CN.md](docs/requirements.zh_CN.md) | 需求文档：功能、规则、场景、待定项 |
 | [docs/ui-spec.zh_CN.md](docs/ui-spec.zh_CN.md) | 界面描述：页面流程 + 框架图 + 状态规则 |
 | [docs/architecture.zh_CN.md](docs/architecture.zh_CN.md) | 架构说明：App/网页分工、数据流、同步策略 |
+| [docs/tech-stack.zh_CN.md](docs/tech-stack.zh_CN.md) | 技术选型：框架、版本矩阵、分层、提醒实现 |
 
 ## 计划
 
@@ -43,8 +44,15 @@
 
 ## 技术栈
 
-待定，倾向 Flutter（iOS/Android）+ Node/SQLite（网页端与同步节点）。
-详见[架构说明](docs/architecture.zh_CN.md)第 7 节。
+| 层 | 选型 |
+|---|---|
+| App | **Flutter ≥ 3.44 / Dart 3.12**（一套代码出 iOS + Android） |
+| 状态 / 路由 | Riverpod 3 · go_router 18 |
+| 本地存储 | **Drift**（SQLite，App 本地为主副本） |
+| 提醒 | flutter_local_notifications 22 + timezone（iOS 64 条滚动窗口） |
+| 网页端与同步节点 | Node + SQLite（P3） |
+
+完整版本矩阵、代码分层与关键取舍见[技术选型](docs/tech-stack.zh_CN.md)。
 
 ---
 
