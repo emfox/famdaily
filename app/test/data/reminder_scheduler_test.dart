@@ -346,6 +346,145 @@ void main() {
     );
   });
 
+  // -------------------------------------------------------------------
+  // 统计分母：往月补齐
+  //
+  // 背景（用户报障）：历史 → 右上角「统计」→「本月」是空的。
+  // 根因是重排只从"今天"往后展开槽位，而统计的分母就是槽位表：
+  // 一个 20 号才打开一次 App 的人，本月前 19 天一条槽位都没有，
+  // 于是"共 0 次该做"，完成率、准时率也就无从谈起。
+  // -------------------------------------------------------------------
+
+  group('往月补齐：统计的分母要覆盖整个本月', () {
+    /// 钉在 3 月 20 日，看 3 月 1 日有没有槽位。
+    Future<RescheduleResult> runOn(
+      ReminderScheduler scheduler,
+      DateTime moment, {
+      RescheduleTrigger trigger = RescheduleTrigger.appLaunch,
+    }) {
+      return withClock(
+        Clock.fixed(moment),
+        () => scheduler.reschedule(trigger: trigger),
+      );
+    }
+
+    test('3 月 20 日启动：3 月 1 日到今天的槽位全在', () async {
+      await db.insertTask(
+        _task('t1', time: domain.FixedTimesRule([domain.LocalTime(8, 0)])),
+        nowMs: _nowMs,
+      );
+
+      await runOn(build(), DateTime(2026, 3, 20, 9));
+
+      final slots = await db.slotsBetween(
+        domain.LocalDate(2026, 3, 1),
+        domain.LocalDate(2026, 3, 20),
+      );
+      expect(
+        slots.length,
+        20,
+        reason: '1 号到 20 号每天一次，应该是 20 条。只有 1 条 = 历史没补上',
+      );
+      expect(
+        slots.map((s) => s.date).reduce((a, b) => a.isBefore(b) ? a : b),
+        domain.LocalDate(2026, 3, 1),
+        reason: '最早的那条必须是月初',
+      );
+    });
+
+    test('补出来的历史槽位不进通知：今晚不会响「3 号的药没吃」', () async {
+      await db.insertTask(
+        _task('t1', time: domain.FixedTimesRule([domain.LocalTime(8, 0)])),
+        nowMs: _nowMs,
+      );
+
+      final result = await runOn(build(), DateTime(2026, 3, 20, 9));
+
+      // 历史 19 天 + 未来若干天都可能落库，但通知只该覆盖今天及以后。
+      expect(
+        gateway.applied.every((p) => !p.date.isBefore(domain.LocalDate(2026, 3, 20))),
+        isTrue,
+        reason: '给过去的日期排通知，用户会莫名其妙收到一堆补卡提醒',
+      );
+      // 条数不该因为补历史而变多：一天一次、窗口内也就那么多。
+      expect(result.scheduled, lessThanOrEqualTo(56));
+    });
+
+    test('已经打过卡的日子，分母和分子对得上', () async {
+      await db.insertTask(
+        _task('t1', time: domain.FixedTimesRule([domain.LocalTime(8, 0)])),
+        nowMs: _nowMs,
+      );
+      // 3 月 5 日打过卡（那时还没补历史槽位——模拟老数据）
+      await db.upsertCheckin(
+        domain.CheckinRecord(
+          id: 'c1',
+          taskId: 't1',
+          date: domain.LocalDate(2026, 3, 5),
+          slotIndex: 0,
+          state: domain.CheckinState.done,
+          doneAtMs: _nowMs,
+          dueAtMinuteOfDay: 480,
+        ),
+        nowMs: _nowMs,
+      );
+
+      await runOn(build(), DateTime(2026, 3, 20, 9));
+
+      final slots = await db.slotsBetween(
+        domain.LocalDate(2026, 3, 1),
+        domain.LocalDate(2026, 3, 20),
+      );
+      expect(
+        slots.where((s) => s.date == domain.LocalDate(2026, 3, 5)),
+        isNotEmpty,
+        reason: '打过卡的那天也要有槽位，否则分子有、分母没有',
+      );
+    });
+
+    test('同一天重排两次，未来槽位不会被第二次删掉', () async {
+      await db.insertTask(
+        _task('t1', time: domain.FixedTimesRule([domain.LocalTime(8, 0)])),
+        nowMs: _nowMs,
+      );
+      final scheduler = build();
+
+      // 先排一次，拿到未来段的槽位。
+      await runOn(scheduler, DateTime(2026, 3, 20, 9));
+      final before = await db.slotsBetween(
+        domain.LocalDate(2026, 3, 20),
+        domain.LocalDate(2026, 4, 2),
+      );
+      expect(before, isNotEmpty);
+
+      // 数据变更触发第二次重排（`shouldReschedule` 会放行）。
+      await runOn(
+        scheduler,
+        DateTime(2026, 3, 20, 10),
+        trigger: RescheduleTrigger.dataChanged,
+      );
+
+      final after = await db.slotsBetween(
+        domain.LocalDate(2026, 3, 20),
+        domain.LocalDate(2026, 4, 2),
+      );
+      expect(
+        after.map((s) => '${s.taskId}|${s.date}|${s.slotIndex}').toSet(),
+        before.map((s) => '${s.taskId}|${s.date}|${s.slotIndex}').toSet(),
+        reason: '未来段的槽位是重灌的，集合应该一样；变少说明误删了',
+      );
+      // 历史段也在。
+      expect(
+        (await db.slotsBetween(
+          domain.LocalDate(2026, 3, 1),
+          domain.LocalDate(2026, 3, 19),
+        )),
+        hasLength(19),
+      );
+    });
+
+  });
+
   test('条数上限：宁可少排几天，也绝不越过 56 条', () async {
     // 每 30 分钟一次，一天 20 次 —— 明显超过上限
     for (var i = 0; i < 3; i++) {

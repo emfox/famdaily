@@ -11,6 +11,11 @@ import 'package:famdaily/domain/model/task.dart' as domain;
 import 'package:famdaily/domain/model/task_status.dart' as domain;
 import 'package:famdaily/domain/model/time_rule.dart' as domain;
 import 'package:famdaily/domain/scheduling/scheduler.dart';
+import 'package:clock/clock.dart';
+import 'package:famdaily/data/notifier/notification_service.dart';
+import 'package:famdaily/data/repo_impl/reminder_scheduler.dart';
+import 'package:famdaily/domain/notification/notification_planner.dart';
+import 'package:famdaily/domain/notification/window_policy.dart';
 import 'package:famdaily/feature/stats/stats_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -278,4 +283,110 @@ void main() {
       expect(lastMonth.range.to, domain.LocalDate(2025, 2, 28));
     });
   });
+
+  // -------------------------------------------------------------------
+  // 用户报障：历史 → 右上角「统计」→「本月」是空的
+  //
+  // 统计的分母是 slots 表，而重排只从"今天"往后展开。20 号才打开一次
+  // App 的用户，本月前 19 天没有槽位，于是"这段时间没有排过打卡项"。
+  // 修法是重排往前展到月初（见 reminder_scheduler）。这一组从**统计的
+  // 出口**断言修完之后用户真的看得见数字。
+  // -------------------------------------------------------------------
+
+  group('本月不该是空的（走真实的重排产出）', () {
+    test('20 号启动一次，本月统计的分母覆盖 1 号到今天', () async {
+      final db = AppDatabase.forTesting(openTestConnection());
+      addTearDown(db.close);
+      await db.insertMember(
+        const domain.Member(
+          id: 'm1',
+          name: '我',
+          sortOrder: 0,
+          createdAtMs: _ts,
+          updatedAtMs: _ts,
+        ),
+        nowMs: _ts,
+      );
+      await db.insertTask(_task('t1', 'm1'), nowMs: _ts);
+
+      // 真跑一次重排，而不是手工塞槽位——手工塞会把 bug 一起绕过去。
+      final scheduler = ReminderScheduler(
+        db: db,
+        notifications: _NoopGateway(),
+      );
+      await withClock(
+        Clock.fixed(DateTime(2026, 3, 20, 9)),
+        () => scheduler.reschedule(trigger: RescheduleTrigger.appLaunch),
+      );
+
+      final view = await StatsService(db).load(
+        period: StatsPeriod.thisMonth,
+        at: DateTime(2026, 3, 20, 12),
+      );
+
+      expect(
+        view.overall.expected,
+        20,
+        reason: '3 月 1 日到 20 日每天一次 = 20 次该做。为 0 就是用户看到的"本月是空的"',
+      );
+      expect(view.rows, hasLength(1));
+      expect(view.rows.single.member.name, '我');
+      expect(view.headline, contains('20 次'));
+    });
+
+    test('本月只统计到今天，不把未来的日子算进分母', () async {
+      final db = AppDatabase.forTesting(openTestConnection());
+      addTearDown(db.close);
+      await db.insertMember(
+        const domain.Member(
+          id: 'm1',
+          name: '我',
+          sortOrder: 0,
+          createdAtMs: _ts,
+          updatedAtMs: _ts,
+        ),
+        nowMs: _ts,
+      );
+      await db.insertTask(_task('t1', 'm1'), nowMs: _ts);
+      final scheduler = ReminderScheduler(db: db, notifications: _NoopGateway());
+      await withClock(
+        Clock.fixed(DateTime(2026, 3, 20, 9)),
+        () => scheduler.reschedule(trigger: RescheduleTrigger.appLaunch),
+      );
+
+      final view = await StatsService(db).load(
+        period: StatsPeriod.thisMonth,
+        at: DateTime(2026, 3, 20, 12),
+      );
+
+      // 重排窗口一直排到 4 月 2 日，但 21 号以后的不该进本月分母。
+      expect(
+        view.overall.expected,
+        lessThanOrEqualTo(20),
+        reason: '未来的槽位进分母，完成率永远上不去',
+      );
+    });
+  });
+}
+
+/// 永远排不出去任何通知的网关：这一组只关心统计的分母。
+final class _NoopGateway implements NotificationGateway {
+  @override
+  Future<bool> hasPermission() async => true;
+
+  @override
+  Future<List<int>> pendingIds() async => const [];
+
+  @override
+  Future<int> applyPlan(List<PlannedNotification> plan) async => 0;
+
+  @override
+  Future<void> cancelSlot({
+    required String taskId,
+    required domain.LocalDate date,
+    required int slotIndex,
+  }) async {}
+
+  @override
+  Future<void> cancelAll() async {}
 }
