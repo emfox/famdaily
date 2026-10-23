@@ -25,7 +25,7 @@ class DayDetailPage extends StatefulWidget {
   const DayDetailPage({
     required this.service,
     required this.date,
-    this.db,
+    required this.db,
     this.scheduler,
     super.key,
   });
@@ -33,8 +33,13 @@ class DayDetailPage extends StatefulWidget {
   final HistoryService service;
   final LocalDate date;
 
-  /// 写入用；null 表示只读浏览（Widget 测试可以直接只测渲染）。
-  final AppDatabase? db;
+  /// 读写用：既要写补卡，也要读成员名（含已删除的）。
+  ///
+  /// 曾经这里是 `AppDatabase?`，注释写着"null 表示只读浏览"。结果历史页
+  /// 忘了传，页面照样渲染、照样不报错，只是所有分组标题都变成
+  /// 「不认识的成员」——可空 + 兜底文案，两件事一起把 bug 藏住了。
+  /// 现在改成 required：漏传是编译错误，不是一个安静的降级。
+  final AppDatabase db;
 
   /// 打卡后立刻静音该槽位，与首页行为一致。
   final ReminderCanceller? scheduler;
@@ -65,12 +70,9 @@ class _DayDetailPageState extends State<DayDetailPage> {
 
   Future<void> _load() async {
     final detail = await widget.service.loadDay(widget.date);
-    final db = widget.db;
     // **含已删除成员**。那天的记录还在，它属于谁不该因为"这个人后来被删了"
     // 就变成一句「已删除的成员」——好几个人还会撞成同一句话。
-    final members = db == null
-        ? <Member>[]
-        : await db.listMembersIncludingDeleted();
+    final members = await widget.db.listMembersIncludingDeleted();
     if (!mounted) {
       return;
     }
@@ -133,9 +135,6 @@ class _DayDetailPageState extends State<DayDetailPage> {
 
   Future<void> _write(CheckinRow row, CheckinChoice choice) async {
     final db = widget.db;
-    if (db == null) {
-      return;
-    }
     final state = switch (choice) {
       CheckinChoice.done => CheckinState.done,
       CheckinChoice.makeup => CheckinState.makeup,

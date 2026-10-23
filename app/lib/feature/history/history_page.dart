@@ -69,6 +69,10 @@ class _HistoryPageState extends State<HistoryPage> {
         builder: (_) => DayDetailPage(
           service: widget.service,
           date: date,
+          // 明细页要读成员名（含已删除的），没有库就只剩「不认识的成员」。
+          // 这里必须传：它曾经漏传，而所有测试都自己把 db 塞进明细页，
+          // 于是"名字全丢了"这件事一直没人发现。
+          db: widget.service.db,
         ),
       ),
     );
