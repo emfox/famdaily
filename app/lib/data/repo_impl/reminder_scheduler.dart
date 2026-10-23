@@ -161,12 +161,26 @@ final class ReminderScheduler {
     final daily = sched.Scheduler.estimateDailyCount(specs, from: today);
     final windowEnd = policy.endFor(today, daily);
 
+    // ---- 往前多展开到"本月 1 号" ----
+    //
+    // 为什么要往前展开：`slots` 表不只是通知的副产物，**统计和历史都靠它算
+    // 分母**。只从今天往后展开的话，一个 20 号才打开一次 App 的用户，
+    // 这个月前 19 天根本没有槽位——「统计 → 本月」永远是空的或只有个位数，
+    // 而实际上他天天都在打卡。
+    //
+    // 往前展开出来的槽位**不进通知**（见下面 plannedAll 的 `from: today`），
+    // 只落库当分母。已经打过卡的会经由 bySlot 匹配上，数字自然是对的。
+    final historyStart = LocalDate(today.year, today.month, 1);
+    final expandFrom = historyStart.isBefore(today) ? historyStart : today;
+
     final expansion = sched.Scheduler.expand(
       specs: specs,
-      from: today,
+      from: expandFrom,
       to: windowEnd,
       // 上限按槽位数算，真正的通知条数由规划器在最后一步裁剪。
-      maxSlots: policy.maxScheduled,
+      // 往前展开会多出最多 31 天，上限相应放宽——否则历史槽位会把
+      // 未来的槽位挤掉，提醒反而变少。
+      maxSlots: policy.maxScheduled + today.daysSince(historyStart) * daily,
     );
 
     // ---- 剔除已结案的槽位 ----
@@ -192,8 +206,15 @@ final class ReminderScheduler {
         ),
     };
 
+    // 只有"今天及以后"该进通知。往月展开出来的槽位**只当分母**——
+    // 用户不会希望今晚收到"3 月 3 日的降压药还没吃"。
+    final upcoming = [
+      for (final s in expansion.slots)
+        if (!s.date.isBefore(today)) s,
+    ];
+
     final plannedAll = NotificationPlanner.plan(
-      expanded: expansion.slots,
+      expanded: upcoming,
       labels: labels,
       now: sched.LocalDateTimeRef(today, LocalTime(now.hour, now.minute)),
       filters: PlannedFilters(
@@ -207,9 +228,24 @@ final class ReminderScheduler {
 
     final capped = NotificationPlanner.cap(plannedAll, policy.maxScheduled);
 
-    // ---- 落库槽位（供通知点击反查） ----
+    // ---- 落库槽位 ----
+    //
+    // 分两段写，起点不同：
+    //   历史段 [月初, 昨天]：只插入，不删除（`backfillSlots`）；
+    //   未来段 [今天, 窗口末]：整段重灌（`replaceSlots`），因为规则可能
+    //     改过，旧槽位要作废。删除**只在这个段内**发生，碰不到历史。
+    final pastSlots = [
+      for (final s in expansion.slots)
+        if (s.date.isBefore(today)) s,
+    ];
+    await _db.backfillSlots(
+      _toSlotsCompanions(pastSlots, const <PlannedNotification>[]),
+    );
     await _db.replaceSlots(
-      _toSlotsCompanions(expansion.slots, capped),
+      _toSlotsCompanions(
+        [for (final s in expansion.slots) if (!s.date.isBefore(today)) s],
+        capped,
+      ),
       from: today,
       to: windowEnd,
       nowMs: now.millisecondsSinceEpoch,

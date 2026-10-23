@@ -409,6 +409,24 @@ class AppDatabase extends _$AppDatabase {
     });
   }
 
+  /// 补写**过去**的槽位：只插入，绝不删除。
+  ///
+  /// 和 [replaceSlots] 的关键区别是没有那句 `delete`。补历史槽位时删除是
+  /// 灾难性的：重排窗口的起点是"今天"，一个只覆盖 8 月的补写如果按窗口删，
+  /// 会把这个窗口里已经存在的东西一并抹掉。
+  ///
+  /// 用 `insertOrReplace`：同一 (task, date, slot) 已存在时，补写的版本会
+  /// 覆盖它。补写用的是**当前**的规则，而旧记录可能是按旧规则排的，
+  /// 以当前规则为准更符合"点进去看到的就是规则说的那样"。
+  Future<void> backfillSlots(List<SlotsCompanion> pastSlots) async {
+    if (pastSlots.isEmpty) {
+      return;
+    }
+    await batch(
+      (b) => b.insertAll(slots, pastSlots, mode: InsertMode.insertOrReplace),
+    );
+  }
+
   Future<List<SlotRow>> slotsBetween(LocalDate from, LocalDate to) {
     return (select(slots)
           ..where(

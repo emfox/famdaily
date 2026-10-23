@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 
 import '../../app/uuid.dart';
@@ -14,6 +13,7 @@ import '../home/checkin_sheets.dart';
 import '../members/member_avatar.dart';
 import '../theme/status_style.dart';
 import 'history_service.dart';
+import '../../app/test_clock.dart';
 
 /// 某一天的明细 + 补卡（ui-spec §3.2）。
 ///
@@ -93,7 +93,7 @@ class _DayDetailPageState extends State<DayDetailPage> {
             content: Text(
               HistoryService.readOnlyHint(
                 detail?.date ?? widget.date,
-                LocalDate.fromDateTime(clock.now()),
+                LocalDate.fromDateTime(appNow()),
               ),
             ),
           ),
@@ -140,7 +140,7 @@ class _DayDetailPageState extends State<DayDetailPage> {
       CheckinChoice.makeup => CheckinState.makeup,
       CheckinChoice.skipped => CheckinState.skipped,
     };
-    final nowMs = clock.now().millisecondsSinceEpoch;
+    final nowMs = appNow().millisecondsSinceEpoch;
     await db.upsertCheckin(
       CheckinRecord(
         id: row.record?.id ?? newId(),
@@ -194,7 +194,7 @@ class _DayDetailPageState extends State<DayDetailPage> {
                     _ReadOnlyNotice(
                       text: HistoryService.readOnlyHint(
                         detail.date,
-                        LocalDate.fromDateTime(clock.now()),
+                        LocalDate.fromDateTime(appNow()),
                       ),
                     ),
                   ],
