@@ -2,10 +2,13 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../../app/app_boot.dart';
+import 'app_boot.dart';
+import '../domain/notification/window_policy.dart' show RescheduleTrigger;
 import '../feature/history/history_page.dart';
 import '../feature/history/history_service.dart';
 import '../feature/home/home_screen.dart';
+import '../feature/members/member_list_page.dart';
+import '../feature/members/member_service.dart';
 import '../feature/settings/settings_page.dart';
 import 'debug_entry.dart';
 
@@ -28,6 +31,29 @@ class HomeShell extends StatefulWidget {
 class _HomeShellState extends State<HomeShell> {
   late int _index = widget.initialIndex;
   late final HistoryService _history = HistoryService(widget.services.db);
+  late final MemberService _members = MemberService(
+    db: widget.services.db,
+    // 成员名会进通知文案（"爷爷的降压药"）：改了名字必须重排，
+    // 否则明天响的还是旧名字。
+    onDataChanged: () => widget.services.scheduler.reschedule(
+      trigger: RescheduleTrigger.dataChanged,
+    ),
+  );
+
+  int? _memberCount;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_refreshMemberCount());
+  }
+
+  Future<void> _refreshMemberCount() async {
+    final n = (await widget.services.db.listMembers()).length;
+    if (mounted) {
+      setState(() => _memberCount = n);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -43,6 +69,8 @@ class _HomeShellState extends State<HomeShell> {
           SettingsPage(
             services: widget.services,
             onOpenDebug: () => unawaited(_openDebug()),
+            memberCount: _memberCount,
+            onOpenMembers: () => unawaited(_openMembers()),
           ),
         ],
       ),
@@ -70,6 +98,14 @@ class _HomeShellState extends State<HomeShell> {
         ],
       ),
     );
+  }
+
+  Future<void> _openMembers() async {
+    await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => MemberListPage(service: _members)),
+    );
+    // 成员可能被增删改名，回来无条件刷一次：这个数字不刷就是错的。
+    await _refreshMemberCount();
   }
 
   Future<void> _openDebug() async {

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../domain/model/member.dart';
 import '../../ui/icon/task_icons.dart';
-import '../home/today_page.dart' show MemberAvatar;
+import '../members/member_avatar.dart';
 import 'task_draft.dart';
 
 /// 新建流程的第 2 步：基本信息（ui-spec §2.2）。

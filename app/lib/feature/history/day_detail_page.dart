@@ -11,7 +11,7 @@ import '../../domain/model/checkin_state.dart';
 import '../../domain/model/local_date.dart';
 import '../../domain/model/member.dart';
 import '../home/checkin_sheets.dart';
-import '../home/today_page.dart' show MemberAvatar;
+import '../members/member_avatar.dart';
 import '../theme/status_style.dart';
 import 'history_service.dart';
 

@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../domain/model/checkin_row.dart';
 import '../../domain/model/local_date.dart';
 import '../../domain/model/local_time.dart';
-import '../../domain/model/member.dart';
+import '../members/member_avatar.dart';
 import '../theme/status_style.dart';
 import 'today_service.dart';
 
@@ -463,40 +463,6 @@ class _StatusMark extends StatelessWidget {
               ),
             ),
           },
-        ),
-      ),
-    );
-  }
-}
-
-/// 成员头像：预置头像 or 名字首字 + 稳定配色。
-class MemberAvatar extends StatelessWidget {
-  const MemberAvatar({required this.member, this.size = 32, super.key});
-
-  final Member member;
-  final double size;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final palette = <Color>[
-      scheme.primaryContainer,
-      scheme.secondaryContainer,
-      scheme.tertiaryContainer,
-      scheme.errorContainer,
-      scheme.surfaceContainerHighest,
-    ];
-    final color = palette[member.avatarColorIndex % palette.length];
-
-    return CircleAvatar(
-      radius: size / 2,
-      backgroundColor: color,
-      child: Text(
-        member.initial,
-        style: TextStyle(
-          fontSize: size * 0.42,
-          fontWeight: FontWeight.w600,
-          color: scheme.onSurface,
         ),
       ),
     );

@@ -13,6 +13,8 @@ class SettingsPage extends StatefulWidget {
   const SettingsPage({
     required this.services,
     required this.onOpenDebug,
+    this.onOpenMembers,
+    this.memberCount,
     super.key,
   });
 
@@ -20,6 +22,12 @@ class SettingsPage extends StatefulWidget {
 
   /// 调试入口（走「关于」里的彩蛋进）。
   final VoidCallback onOpenDebug;
+
+  /// 打开成员管理；null = 这一屏不支持（测试里可以省掉）。
+  final VoidCallback? onOpenMembers;
+
+  /// 成员数，显示在「成员」右侧。null = 不显示。
+  final int? memberCount;
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -109,14 +117,30 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
                 const Divider(height: 24),
 
-                const _SectionHeader('数据'),
+                const _SectionHeader('家人'),
                 ListTile(
                   leading: const Icon(Icons.group_outlined),
                   title: const Text('成员'),
                   subtitle: const Text('加人、改名字、换头像'),
-                  trailing: const Icon(Icons.chevron_right, size: 18),
-                  onTap: () => _notReady('成员管理'),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (widget.memberCount != null)
+                        Text(
+                          '${widget.memberCount} 位',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.outline,
+                          ),
+                        ),
+                      const Icon(Icons.chevron_right, size: 18),
+                    ],
+                  ),
+                  enabled: widget.onOpenMembers != null,
+                  onTap: widget.onOpenMembers,
                 ),
+                const Divider(height: 24),
+
+                const _SectionHeader('数据'),
                 ListTile(
                   leading: const Icon(Icons.file_download_outlined),
                   title: const Text('导出备份'),
