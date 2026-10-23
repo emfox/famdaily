@@ -9,6 +9,7 @@ import '../../domain/model/rule_text.dart';
 import '../../domain/model/task.dart';
 import '../../domain/model/task_status.dart';
 import '../../domain/stats/stats.dart';
+import '../../data/photo/photo_store.dart';
 import '../../ui/icon/task_icons.dart';
 import '../members/member_avatar.dart';
 import 'task_detail_service.dart';
@@ -24,6 +25,7 @@ class TaskDetailPage extends StatefulWidget {
     required this.taskId,
     this.onEdit,
     this.onOpenPhoto,
+    this.store,
     super.key,
   });
 
@@ -34,7 +36,13 @@ class TaskDetailPage extends StatefulWidget {
   final void Function(Task task)? onEdit;
 
   /// 点照片缩略图看大图；null 时用内置的全屏预览。
+  ///
+  /// 传进来的是**解析好的绝对路径**——页面内部已经做过
+  /// `PhotoStore.resolve`，调用方不需要再拼目录。
   final void Function(String path)? onOpenPhoto;
+
+  /// 照片仓库（把相对路径换成可读路径）。null 时缩略图只显示占位。
+  final PhotoStore? store;
 
   @override
   State<TaskDetailPage> createState() => _TaskDetailPageState();
@@ -132,6 +140,7 @@ class _TaskDetailPageState extends State<TaskDetailPage> {
                 _DayGroup(
                   day: day,
                   today: detail.today,
+                  store: widget.store,
                   onOpenPhoto: (path) => _openPhoto(detail, path),
                 ),
             const SizedBox(height: 8),
@@ -352,11 +361,13 @@ class _DayGroup extends StatelessWidget {
   const _DayGroup({
     required this.day,
     required this.today,
+    required this.store,
     required this.onOpenPhoto,
   });
 
   final RecordDay day;
   final LocalDate today;
+  final PhotoStore? store;
   final void Function(String path) onOpenPhoto;
 
   @override
@@ -383,7 +394,11 @@ class _DayGroup extends StatelessWidget {
         for (final e in day.entries)
           Padding(
             padding: const EdgeInsets.only(bottom: 6),
-            child: _RecordRow(entry: e, onOpenPhoto: onOpenPhoto),
+            child: _RecordRow(
+              entry: e,
+              store: store,
+              onOpenPhoto: onOpenPhoto,
+            ),
           ),
       ],
     );
@@ -391,9 +406,14 @@ class _DayGroup extends StatelessWidget {
 }
 
 class _RecordRow extends StatelessWidget {
-  const _RecordRow({required this.entry, required this.onOpenPhoto});
+  const _RecordRow({
+    required this.entry,
+    required this.store,
+    required this.onOpenPhoto,
+  });
 
   final RecordEntry entry;
+  final PhotoStore? store;
   final void Function(String path) onOpenPhoto;
 
   @override
@@ -468,8 +488,9 @@ class _RecordRow extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.only(left: 8),
               child: _Thumb(
-                path: entry.record!.photoPath!,
-                onTap: () => onOpenPhoto(entry.record!.photoPath!),
+                relativePath: entry.record!.photoPath!,
+                store: store,
+                onTap: onOpenPhoto,
               ),
             ),
         ],
@@ -478,21 +499,56 @@ class _RecordRow extends StatelessWidget {
   }
 }
 
-/// 缩略图。文件不存在时画一个占位，不崩——备份恢复后照片可能没跟过来。
-class _Thumb extends StatelessWidget {
-  const _Thumb({required this.path, required this.onTap});
+/// 缩略图。
+///
+/// 分两步是必须的：库里存的是**相对路径**（`2025/03/xxx.jpg`），
+/// 绝对路径在 iOS 每次升级后都会变。所以要先 `resolve` 拿到当前的绝对路径，
+/// 再画。
+///
+/// 解析不到就画占位而不是崩：照片可能被用户从系统相册清理掉了，
+/// 也可能这份数据是从没带照片的备份恢复来的——两种情况记录本身都还有效。
+class _Thumb extends StatefulWidget {
+  const _Thumb({required this.relativePath, required this.store, required this.onTap});
 
-  final String path;
-  final VoidCallback onTap;
+  final String relativePath;
+  final PhotoStore? store;
+  final ValueChanged<String> onTap;
+
+  @override
+  State<_Thumb> createState() => _ThumbState();
+}
+
+class _ThumbState extends State<_Thumb> {
+  String? _abs;
+  bool _resolved = false;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_resolve());
+  }
+
+  Future<void> _resolve() async {
+    final store = widget.store;
+    final abs = store == null
+        // 没注入 store（测试/只读场景）：把相对路径当绝对路径试试。
+        ? (File(widget.relativePath).existsSync() ? widget.relativePath : null)
+        : await store.resolve(widget.relativePath);
+    if (mounted) {
+      setState(() {
+        _abs = abs;
+        _resolved = true;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final file = File(path);
-    final exists = file.existsSync();
+    final abs = _abs;
 
     return InkWell(
-      onTap: exists ? onTap : null,
+      onTap: abs == null ? null : () => widget.onTap(abs),
       borderRadius: BorderRadius.circular(6),
       child: Container(
         width: 44,
@@ -502,9 +558,9 @@ class _Thumb extends StatelessWidget {
           color: scheme.surfaceContainerHighest,
           borderRadius: BorderRadius.circular(6),
         ),
-        child: exists
+        child: abs != null
             ? Image.file(
-                file,
+                File(abs),
                 fit: BoxFit.cover,
                 cacheWidth: 132,
                 errorBuilder: (_, _, _) => Icon(
@@ -514,7 +570,10 @@ class _Thumb extends StatelessWidget {
                 ),
               )
             : Icon(
-                Icons.image_not_supported_outlined,
+                // 解析完才知道真的没有；还没解析完时先不显示叉，避免闪一下。
+                _resolved
+                    ? Icons.image_not_supported_outlined
+                    : Icons.image_outlined,
                 size: 18,
                 color: scheme.outline,
               ),

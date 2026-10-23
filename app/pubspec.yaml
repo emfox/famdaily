@@ -50,6 +50,9 @@ dependencies:
   archive: ^4.5.2
   share_plus: ^13.3.1
 
+  # 打卡凭证：拍照 / 从相册选（照片只存本地，不同步网页）
+  image_picker: ^1.2.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

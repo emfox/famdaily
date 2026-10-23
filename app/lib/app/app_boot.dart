@@ -14,6 +14,8 @@ import 'package:flutter/foundation.dart';
 
 import '../data/db/app_database.dart';
 import '../data/notifier/notification_service.dart';
+import '../data/photo/image_picker_photo_picker.dart';
+import '../data/photo/photo_store.dart';
 import '../data/repo_impl/reminder_scheduler.dart';
 import '../domain/model/member.dart' as domain;
 import '../domain/notification/window_policy.dart';
@@ -26,11 +28,20 @@ class AppServices {
     required this.db,
     required this.notifications,
     required this.scheduler,
+    required this.photoPicker,
+    required this.photoStore,
   });
 
   final AppDatabase db;
   final NotificationService notifications;
   final ReminderScheduler scheduler;
+
+  /// 拍照 / 选图。抽成接口是为了 Widget 测试能注入假实现——
+  /// 真的 image_picker 会拉起系统 UI，测试里一点就卡住。
+  final PhotoPicker photoPicker;
+
+  /// 照片落盘与读取（写相对路径，见 `photo_store.dart` 的说明）。
+  final PhotoStore photoStore;
 }
 
 /// 启动引导。可重入（`init` 只会真正跑一次）。
@@ -67,6 +78,7 @@ class AppBoot {
     await _ensureSelfMember(db);
 
     final scheduler = ReminderScheduler(db: db, notifications: notifications);
+    final photoStore = PhotoStore();
 
     try {
       firstReschedule = await scheduler.reschedule(
@@ -80,6 +92,8 @@ class AppBoot {
       db: db,
       notifications: notifications,
       scheduler: scheduler,
+      photoPicker: ImagePickerPhotoPicker(),
+      photoStore: photoStore,
     );
     _services = services;
     return services;

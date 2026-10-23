@@ -177,11 +177,17 @@ class _HomeScreenState extends State<HomeScreen>
         if (!mounted) {
           return;
         }
-        // 打完卡立刻给个"记一句"的入口（ui-spec：浮出后 3 秒收起）。
-        final note = await showNoteSheet(context, row);
-        if (note != null && note.trim().isNotEmpty) {
-          await _attachNote(row, note.trim());
+        // 打完卡立刻给「记一句 / 加张照片」的入口（ui-spec §1）。
+        // 这是**可选**的：用户直接关掉是正常路径，不该再拦一下。
+        final extras = await showNoteSheet(
+          context,
+          row,
+          picker: widget.services.photoPicker,
+        );
+        if (extras == null || extras.isEmpty || !mounted) {
+          return;
         }
+        await _attachExtras(row, extras);
         return;
     }
   }
@@ -221,12 +227,34 @@ class _HomeScreenState extends State<HomeScreen>
     await _afterChange();
   }
 
-  Future<void> _attachNote(CheckinRow row, String note) async {
+  /// 把备注和照片补到刚才那条记录上。
+  ///
+  /// 先落盘照片再写库：反过来的话库里会先出现一个指向不存在文件的路径，
+  /// 下次打开就画"照片找不到了"。落盘失败就只存备注，并告诉用户一声——
+  /// 照片是软性凭证，它存不下不该让整条打卡失败。
+  Future<void> _attachExtras(CheckinRow row, CheckinExtras extras) async {
     final existing = row.record;
     if (existing == null) {
       return;
     }
-    final now = clock.now();
+    final nowMs = clock.now().millisecondsSinceEpoch;
+
+    String? photoPath = existing.photoPath;
+    final pending = extras.photo;
+    if (pending != null) {
+      final saved = await widget.services.photoStore.save(pending.bytes);
+      if (saved != null) {
+        // 换图时把旧文件删掉，不留孤儿。
+        final old = existing.photoPath;
+        if (old != null && old.isNotEmpty) {
+          await widget.services.photoStore.delete(old);
+        }
+        photoPath = saved.relativePath;
+      } else if (mounted) {
+        _toast('照片没存上（可能太大了），备注已经记下');
+      }
+    }
+
     await widget.services.db.upsertCheckin(
       CheckinRecord(
         id: existing.id,
@@ -236,10 +264,10 @@ class _HomeScreenState extends State<HomeScreen>
         state: existing.state,
         doneAtMs: existing.doneAtMs,
         dueAtMinuteOfDay: existing.dueAtMinuteOfDay,
-        note: note,
-        photoPath: existing.photoPath,
+        note: extras.note ?? existing.note,
+        photoPath: photoPath,
       ),
-      nowMs: now.millisecondsSinceEpoch,
+      nowMs: nowMs,
     );
     await _load(silent: true);
   }
@@ -264,6 +292,7 @@ class _HomeScreenState extends State<HomeScreen>
         builder: (_) => TaskDetailPage(
           service: _detail,
           taskId: taskId,
+          store: widget.services.photoStore,
           onEdit: (task) => unawaited(_editTask(task)),
         ),
       ),
