@@ -575,6 +575,80 @@
 `AppDatabase?` 让漏传在编译期合法，两件事一起就把 bug 藏住了。
 要么把依赖改成 `required`，要么至少留一条从真实入口进去的测试。
 
+### 15.0c 第四轮：把端到端测试真的搭起来（用户要求）
+
+用户原话：**「这种问题，单元测试解决不了，应该安排集成测试或者端到端测试」**。
+
+上一轮的修复是对的，但用户点出了更根本的问题：**这类 bug 的防线位置错了**。
+于是这一轮不修 bug，先把"能抓住这类 bug 的测试"建起来，建的过程中又抓出两个真 bug。
+
+#### 环境选择的来龙去脉
+
+| 尝试 | 结果 |
+|---|---|
+| Android 模拟器 | ❌ 本机没有 KVM，起不来 |
+| `flutter test integration_test/ -d chrome` | ⚠️ 能跑，但 Web 上是 canvas 渲染，语义树和点击命中都跟真机不同 |
+| **Linux 桌面 + Xvfb** | ✅ 同一份 widget 树、真 GTK 渲染、真点击。`xvfb-run` 在 CI 也能用 |
+
+跑法收进 `app/tool/integration_test.sh`，和 `tool/test.sh` 并列。
+
+#### 建这套测试时踩出来的三个真 bug
+
+| 条目 | 现象 | 根因 | 处理 |
+|---|---|---|---|
+| **R-23** | 历史页挂后台跨月再回来，日历还停在启动那个月 | `_cursor` 只在 `initState` 对齐"今天"，之后除了翻月永不重算。手机上 App 一挂后台就是几天，回来时「今天」那格根本不在页面上 | `WidgetsBindingObserver` + `resumed` 时若跨月就重对齐；用户手动翻过月则不打扰（`_pinnedToToday`） |
+| **N-08** | 从「设置 → 成员」新加一个人，回首页新建打卡项，第 2 步「谁做」里还是只有「我」 | `HomeScreen` 常驻 `IndexedStack`，切回来不重建，`_members` 一直是旧的。`HomeShell` 知道成员变了（它刷新了计数），但没告诉首页 | `HomeShell` 递增 `memberRevision`，`HomeScreen.didUpdateWidget` 里比对并重载 |
+| — | （不是 bug）`IndexedStack` 预创建导致首帧就在跑子页面的 `initState` | 这是设计如此，切 tab 不丢状态靠它 | 测试侧适配，见下 |
+
+R-23 和 N-08 都属于**"页面不报错、测试全绿、但用起来不对"**那一类。它们能活到现在，
+正是因为没有任何一条测试是从「关机放一夜再打开」或「去设置加个人再回来」这个角度写的。
+
+#### 测试脚手架上的四个坑（都不是 App 的问题，但都很费时间）
+
+这一节留给下一个人，省得重踩：
+
+1. **`withClock` 在集成测试里失效**。
+   `package:clock` 是把 Clock 塞进 `Zone.current` 的 zoneValue。单元测试都在同一个 zone，好用；
+   但 `IntegrationTestWidgetsFlutterBinding` 是 live binding，页面的 `initState`/`build`
+   跑在**引擎那侧的另一个 zone**。实测打印：
+   ```
+   BODY  zone=18070123 clock=2026-03-02 20:00   ← 测试体
+   BUILD zone=159873591 clock=2026-10-24 00:39  ← 页面
+   ```
+   症状极迷惑：测试体里 `clock.now()` 明明是 3 月，日历画出来是 10 月。
+   解法是 `lib/app/test_clock.dart`：把"现在几点"放进一个**全局变量**，
+   页面统一走 `appNow()`，任何 zone 读到都一样。生产构建里 `TestClock.enabled`
+   永远是 false，走的就是普通 `clock.now()`。
+
+2. **打卡后的底部面板会吃掉后面所有点击**。
+   打卡成功会 `showModalBottomSheet` 出「记一句 / 加张照片」，带一层 ModalBarrier。
+   不收掉它，后面点底部导航"成功"但什么都没发生——症状是"切不到历史页"。
+   另外判断关没关**不能数 `ModalBarrier`**：Navigator 常驻一层，从 2 变 1 才是真关了。
+   判据要用「`BottomSheet` 还在不在」。
+
+3. **`find.text('历史').last` 会点错地方**。
+   首页打卡详情里也有一行「历史」字样。`.last` 点到它上面，tab 不会切，
+   测试继续往下跑，然后在一个完全无关的地方报错。必须在 `NavigationBar` 里找。
+   同理，`popToRoot` 的判据也不能用 `find.text('今日')`——它会被假阳性满足。
+
+4. **多点一次不如断言到达**。
+   真机渲染下偶尔第一次点只上了水波纹。`goToTab` 现在的做法是：点 → 断言目标页
+   在树上 → 没到就重点，三次还不到就 `fail`，而不是带着错误状态往下跑。
+
+#### 新增的自动化
+
+| 文件 | 内容 |
+|---|---|
+| `app/lib/app/test_clock.dart` | 跨 zone 的假时钟（`TestClock` + `appNow()`） |
+| `app/integration_test/support/harness.dart` | 真数据库文件 + 假通知网关 + `atTime`（可嵌套） |
+| `app/integration_test/app_flow_test.dart` | 5 条端到端：真名显示 / 真持久化 / 走到提醒层 / tab 切换 / 删成员后仍显示真名 |
+| `app/test/feature/history_page_test.dart` | 新增 5 条跨月用例（R-23 回归） |
+| `app/tool/integration_test.sh` | 一条命令跑端到端 |
+
+R-23 的 5 条用例做了**反向验证**：把 `_followTodayIfNeeded()` 撤掉，3 条立刻红
+（跨月、跨年、点今天后重新跟随），"同月不动"和"手动翻月别拽回去"仍绿——
+说明它们各自守的是不同的行为，不是一起凑数的。
+
 ### 15.1 发现但本轮不改的
 
 | 条目 | 现状 | 为什么先不改 |
@@ -605,15 +679,25 @@
 | `test/spec/a_spec_test.dart` | G-10、G-12、G-13、G-07、A-01、H-23、H-26、H-27 | 19 |
 | `test/spec/b_nav_spec_test.dart` | G-17、N-07、N-14、N-27 | 4 |
 | `test/feature/day_detail_page_test.dart` | R-11、R-13、R-18、R-19、R-20、R-21 | 8 |
-| `test/feature/history_page_test.dart` | R-22（从历史页真实入口进去，含已删/未删两种） | 4 |
+| `test/feature/history_page_test.dart` | R-22（从历史页真实入口进去，含已删/未删两种）、R-23（跨月/跨年/手动翻月五行） | 9 |
 | `test/feature/task_detail_page_test.dart` | D-03a | 19 |
 | `test/feature/task_detail_service_test.dart` | D-03a（数据层口径） | — |
 
+端到端那一层单独一张表。这些断言的价值在于**入口是真的**：从 `HomeShell` 起手，
+点底部导航、点日历、点状态圈，中间没有一处是测试替页面构造的。
+
+| 文件 | 覆盖 | 条数 |
+|---|---|---|
+| `integration_test/app_flow_test.dart` | R-22（真实入口全链路）、持久化、提醒联动、导航、R-23 | 5 |
+
 ```bash
-cd app && flutter test test/spec/
+cd app
+./tool/test.sh              # 单元 + 组件，532 条
+./tool/integration_test.sh  # 端到端，5 条，Linux 桌面 + Xvfb
 ```
 
 其余标【眼】的条目（字体放大、暗色实际观感、大屏、触感）仍需真机核对。
+系统弹窗（通知横幅、相机、文件选择器）也还是空白——那些只有真手机能看。
 
 
 ---
