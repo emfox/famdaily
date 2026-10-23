@@ -161,6 +161,105 @@ void main() {
     expect(service.db, same(db));
   });
 
+  group('跨月：挂后台很久再回来，日历要跟上今天', () {
+    // 这一组守的是一个**真实会被用户碰到**的毛病：`_cursor` 只在 initState
+    // 对齐过"今天"，之后除了翻月永不重算。手机上的 App 一挂后台就是几天，
+    // 回来时历史页还停在启动那天所在的月份——最糟的情况是「今天」那格
+    // 根本不在当前月里，用户以为当天的记录没了。
+    //
+    // 冷启动（重启 App）能自愈，所以只在"没杀进程、直接切回来"时暴露。
+    Future<void> pumpHistoryAt(WidgetTester tester, DateTime at) async {
+      await withClock(Clock.fixed(at), () async {
+        await tester.pumpWidget(
+          MaterialApp(home: HistoryPage(service: service, onOpenStats: null)),
+        );
+        await tester.pumpAndSettle();
+      });
+    }
+
+    /// 模拟切后台再切回来。页面在后台的整段时间里，假时钟是**新的**时间。
+    Future<void> resumeAt(WidgetTester tester, DateTime at) async {
+      await withClock(Clock.fixed(at), () async {
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        await tester.pumpAndSettle();
+      });
+    }
+
+    testWidgets('从 3 月挂到 4 月，回来就显示 4 月', (tester) async {
+      await pumpHistoryAt(tester, DateTime(2026, 3, 31, 22));
+      expect(find.text('2026 年 3 月'), findsOneWidget);
+
+      await resumeAt(tester, DateTime(2026, 4, 1, 9));
+
+      expect(
+        find.text('2026 年 4 月'),
+        findsOneWidget,
+        reason: '跨月了还停在 3 月，「今天」那格根本不在页面上',
+      );
+      expect(find.text('2026 年 3 月'), findsNothing);
+    });
+
+    testWidgets('跨年也要跟：12 月挂到次年 1 月', (tester) async {
+      await pumpHistoryAt(tester, DateTime(2026, 12, 30, 22));
+      expect(find.text('2026 年 12 月'), findsOneWidget);
+
+      await resumeAt(tester, DateTime(2027, 1, 2, 9));
+
+      expect(find.text('2027 年 1 月'), findsOneWidget);
+    });
+
+    testWidgets('同月回来不动：不打断用户正在看的月份', (tester) async {
+      await pumpHistoryAt(tester, DateTime(2026, 3, 2, 8));
+
+      await resumeAt(tester, DateTime(2026, 3, 2, 20));
+
+      expect(find.text('2026 年 3 月'), findsOneWidget);
+    });
+
+    testWidgets('用户自己翻过月，回来就别拽他回去', (tester) async {
+      // 翻到上个月对比数据，切出去回个微信再回来——被拽回本月很讨厌。
+      await pumpHistoryAt(tester, DateTime(2026, 3, 2, 8));
+      expect(find.text('2026 年 3 月'), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.chevron_left));
+      await tester.pumpAndSettle();
+      expect(find.text('2026 年 2 月'), findsOneWidget);
+
+      await resumeAt(tester, DateTime(2026, 4, 3, 9));
+
+      expect(
+        find.text('2026 年 2 月'),
+        findsOneWidget,
+        reason: '用户手动翻的月份必须留住',
+      );
+    });
+
+    testWidgets('翻过月之后点「今天」，跟着今天的逻辑重新生效', (tester) async {
+      await pumpHistoryAt(tester, DateTime(2026, 3, 2, 8));
+      await tester.tap(find.byIcon(Icons.chevron_left));
+      await tester.pumpAndSettle();
+      expect(find.text('2026 年 2 月'), findsOneWidget);
+
+      // 点「今天」回本月（此刻还是 3 月 2 日）。
+      // 「今天」这个按钮的 onPressed 会读 clock.now()，点击本身也得在假时钟里，
+      // 否则它会把光标带到**真实**的今天（跑测试那天），后面全对不上。
+      await withClock(Clock.fixed(DateTime(2026, 3, 2, 8)), () async {
+        await tester.tap(find.text('今天'));
+        await tester.pumpAndSettle();
+      });
+      expect(find.text('2026 年 3 月'), findsOneWidget);
+
+      await resumeAt(tester, DateTime(2026, 4, 3, 9));
+
+      expect(
+        find.text('2026 年 4 月'),
+        findsOneWidget,
+        reason: '点过「今天」就等于放弃手动翻月，应该重新跟随',
+      );
+    });
+  });
+
   test('历史服务暴露的库就是自己那个', () {
     expect(HistoryService(db).db, same(db));
   });

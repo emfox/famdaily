@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 
 import '../../app/app_boot.dart';
@@ -22,6 +21,7 @@ import '../task_edit/task_edit_page.dart';
 import 'checkin_sheets.dart';
 import 'today_page.dart';
 import 'today_service.dart';
+import '../../app/test_clock.dart';
 
 /// 首页的状态容器。
 ///
@@ -29,9 +29,19 @@ import 'today_service.dart';
 /// 首页的数据是"一屏快照"，每次操作后整体重读一次最省心也最不容易错。
 /// 复杂度留给真正需要细粒度刷新的地方（P2 的日历）。
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({required this.services, super.key});
+  const HomeScreen({required this.services, this.memberRevision = 0, super.key});
 
   final AppServices services;
+
+  /// 成员表被别处改过时，由 [HomeShell] 递增这个数。
+  ///
+  /// 首页常驻在 `IndexedStack` 里，切走再切回来**不会重建**，`initState`
+  /// 也不会再跑一遍。于是从「设置 → 成员」加完人回来，首页记着的还是旧名单：
+  /// 新建打卡项的第 2 步只列出「我」，新加的人选不了。用户看着像是"人没加进去"。
+  ///
+  /// 不用 `didUpdateWidget` 之外的机制（比如全局事件总线）：一个自增计数
+  /// 就够了，而且谁改的、什么时候改的，在 `HomeShell` 那边一眼能看清。
+  final int memberRevision;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -45,7 +55,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   HomeLayout _layout = HomeLayout.timeline;
   List<Member> _members = const [];
   bool _loading = true;
-  LocalDate _lastKnownDay = LocalDate.fromDateTime(clock.now());
+  LocalDate _lastKnownDay = LocalDate.fromDateTime(appNow());
 
   @override
   void initState() {
@@ -53,6 +63,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     unawaited(_restoreLayout());
     unawaited(_load());
+  }
+
+  @override
+  void didUpdateWidget(HomeScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 别处动过成员表：重读一遍。「谁做」的选择器就在这一屏上，
+    // 名单旧了会让新建流程缺人。
+    if (widget.memberRevision != oldWidget.memberRevision) {
+      unawaited(_load(silent: true));
+    }
   }
 
   @override
@@ -66,7 +86,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (state != AppLifecycleState.resumed) {
       return;
     }
-    final today = LocalDate.fromDateTime(clock.now());
+    final today = LocalDate.fromDateTime(appNow());
     if (today == _lastKnownDay) {
       // 没跨天也要重算一遍：此刻的"迟 N 分钟"变了。
       unawaited(_load(silent: true));
@@ -96,7 +116,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     await widget.services.db.setSetting(
       'home.layout',
       layout.name,
-      nowMs: clock.now().millisecondsSinceEpoch,
+      nowMs: appNow().millisecondsSinceEpoch,
     );
   }
 
@@ -140,7 +160,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       return;
     }
 
-    final today = _view.date ?? LocalDate.fromDateTime(clock.now());
+    final today = _view.date ?? LocalDate.fromDateTime(appNow());
     final now = _view.now;
     final visual = now == null ? CheckinVisual.pending : row.visual(today, now);
 
@@ -188,7 +208,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _persist(CheckinRow row, CheckinChoice choice) async {
-    final now = clock.now();
+    final now = appNow();
     final state = switch (choice) {
       CheckinChoice.done => CheckinState.done,
       CheckinChoice.makeup => CheckinState.makeup,
@@ -232,7 +252,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (existing == null) {
       return;
     }
-    final nowMs = clock.now().millisecondsSinceEpoch;
+    final nowMs = appNow().millisecondsSinceEpoch;
 
     String? photoPath = existing.photoPath;
     final pending = extras.photo;
@@ -325,7 +345,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// 三个动作都**不碰记录**，只是改"以后还生不生成待办"。所以不需要
   /// 二次确认——它们都是可逆的。真正不可逆的只有删除。
   Future<void> _setStatus(Task task, TaskStatus status) async {
-    final nowMs = clock.now().millisecondsSinceEpoch;
+    final nowMs = appNow().millisecondsSinceEpoch;
     await widget.services.db.setTaskStatus(task.id, status, nowMs: nowMs);
     await _afterChange();
     if (!mounted) {
@@ -369,7 +389,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
     await widget.services.db.deleteTask(
       task.id,
-      nowMs: clock.now().millisecondsSinceEpoch,
+      nowMs: appNow().millisecondsSinceEpoch,
     );
     await _afterChange();
     if (!mounted) {
@@ -434,7 +454,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// 新建走 insert，编辑走 update——用 [Task.createdAtMs] 是否等于
   /// `updatedAtMs` 判断不可靠，所以这里直接查一次库看有没有这行。
   Future<void> _saveTask(Task task) async {
-    final nowMs = clock.now().millisecondsSinceEpoch;
+    final nowMs = appNow().millisecondsSinceEpoch;
     final existing = await widget.services.db.findTask(task.id);
     if (existing == null) {
       await widget.services.db.insertTask(task, nowMs: nowMs);
@@ -484,6 +504,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 /// 直接复用 DAO 的同名方法，这里只是给 UI 一个不依赖 drift 的入口。
 extension CheckinWriter on AppDatabase {
   Future<void> saveCheckin(CheckinRecord c) async {
-    await upsertCheckin(c, nowMs: clock.now().millisecondsSinceEpoch);
+    await upsertCheckin(c, nowMs: appNow().millisecondsSinceEpoch);
   }
 }

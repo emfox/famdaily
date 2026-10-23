@@ -1,4 +1,5 @@
-import 'package:clock/clock.dart';
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../domain/model/local_date.dart';
@@ -6,6 +7,7 @@ import '../../domain/stats/stats.dart';
 import 'day_detail_page.dart';
 import 'history_calendar.dart';
 import 'history_service.dart';
+import '../../app/test_clock.dart';
 
 /// 历史页：月历 + 本月完成率（ui-spec §3.1）。
 ///
@@ -27,19 +29,59 @@ class HistoryPage extends StatefulWidget {
   State<HistoryPage> createState() => _HistoryPageState();
 }
 
-class _HistoryPageState extends State<HistoryPage> {
-  late LocalDate _cursor = LocalDate.fromDateTime(clock.now());
+class _HistoryPageState extends State<HistoryPage> with WidgetsBindingObserver {
+  late LocalDate _cursor = LocalDate.fromDateTime(appNow());
   MonthView? _view;
   bool _loading = true;
+
+  /// 用户手动翻过月之后，就不再自动跟「今天」走——翻到 4 月看图，回来被
+  /// 拽回 10 月是很讨厌的。点「今天」会把这个标记清掉。
+  bool _pinnedToToday = true;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _load();
   }
 
-  Future<void> _load() async {
-    setState(() => _loading = true);
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) {
+      return;
+    }
+    _followTodayIfNeeded();
+    // 回到前台也可能有别的进程写过库（网页端、恢复备份），顺手刷一下。
+    unawaited(_load(silent: true));
+  }
+
+  /// 跨月了就把光标挪到当月。
+  ///
+  /// `_cursor` 只在 initState 时对齐过「今天」，之后除了翻月永不重算。
+  /// 而 App 一挂后台就是好几天，回来时日历还停在几个月前——更糟的是
+  /// 「今天」那格根本不在当前月里，用户会以为数据丢了。
+  void _followTodayIfNeeded() {
+    if (!_pinnedToToday) {
+      return;
+    }
+    final today = LocalDate.fromDateTime(appNow());
+    if (today.year == _cursor.year && today.month == _cursor.month) {
+      return;
+    }
+    setState(() => _cursor = today);
+    unawaited(_load());
+  }
+
+  Future<void> _load({bool silent = false}) async {
+    if (!silent) {
+      setState(() => _loading = true);
+    }
     final view = await widget.service.loadMonth(
       year: _cursor.year,
       month: _cursor.month,
@@ -54,12 +96,18 @@ class _HistoryPageState extends State<HistoryPage> {
   }
 
   void _shiftMonth(int delta) {
-    setState(() => _cursor = _cursor.addMonths(delta));
+    setState(() {
+      _cursor = _cursor.addMonths(delta);
+      _pinnedToToday = false;
+    });
     _load();
   }
 
   void _goToday() {
-    setState(() => _cursor = LocalDate.fromDateTime(clock.now()));
+    setState(() {
+      _cursor = LocalDate.fromDateTime(appNow());
+      _pinnedToToday = true;
+    });
     _load();
   }
 
@@ -140,7 +188,7 @@ class _HistoryPageState extends State<HistoryPage> {
   }
 
   bool _isCurrentMonth(MonthView v) {
-    final today = LocalDate.fromDateTime(clock.now());
+    final today = LocalDate.fromDateTime(appNow());
     return v.year == today.year && v.month == today.month;
   }
 }
