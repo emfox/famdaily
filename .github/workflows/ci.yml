@@ -1,0 +1,40 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.9'
+          channel: stable
+          cache: true
+
+      - name: 依赖
+        run: flutter pub get
+
+      # 决策 4：lib/domain/** 必须是纯 Dart，禁止 import package:flutter/...
+      # analyzer 表达不了"目录级 import 白名单"，所以用 grep 兜底。
+      - name: 校验 domain 层纯净性
+        run: |
+          if grep -rn "package:flutter/" lib/domain/ ; then
+            echo "::error::lib/domain 被 Flutter 污染（见 docs/tech-stack.zh_CN.md §8 决策 4）"
+            exit 1
+          fi
+          echo "domain 层干净"
+
+      - name: 静态分析
+        run: flutter analyze --no-fatal-infos
+
+      - name: 单元测试
+        run: flutter test --reporter expanded

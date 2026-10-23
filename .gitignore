@@ -6,10 +6,24 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+*.iml
 
-# 依赖与构建产物（后续添加代码后生效）
+# 依赖与构建产物
 node_modules/
 build/
 dist/
 .dart_tool/
-*.iml
+**/.dart_tool/
+**/build/
+app/.flutter-plugins
+app/.flutter-plugins-dependencies
+app/.metadata
+
+# Flutter 平台目录里的本地配置
+app/ios/Flutter/Generated.xcconfig
+app/ios/Flutter/flutter_export_environment.sh
+app/ios/Podfile.lock
+app/ios/Pods/
+app/android/local.properties
+app/android/.gradle/
+app/android/key.properties
