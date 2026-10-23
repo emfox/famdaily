@@ -54,6 +54,26 @@
 
 完整版本矩阵、代码分层与关键取舍见[技术选型](docs/tech-stack.zh_CN.md)。
 
+## 当前进度
+
+| 模块 | 状态 |
+|---|---|
+| 需求 / 界面 / 架构 / 选型 文档 | ✅ 定稿 |
+| `lib/domain/`（排程展开器、规则、疗程） | ✅ 104 个单测全绿 |
+| Drift 建表与迁移 | ⬜ 下一步 |
+| 通知调度器（iOS 64 条滚动窗口） | ⬜ |
+| UI（首页三态 → 建项目 → 历史） | ⬜ |
+
+```bash
+cd app
+flutter pub get
+flutter test          # 只跑 domain 层，不需要模拟器
+flutter analyze
+```
+
+> `lib/domain/**` 是纯 Dart，禁止 `import 'package:flutter/...'`；CI 里有 grep 卡口。
+> 这条是为了让排程规则能脱离模拟器单测，也是 P3 网页端复刻规则时的参考实现。
+
 ---
 
 <sub>文档中的 🟡 表示"按此默认值执行，可推翻"。</sub>
