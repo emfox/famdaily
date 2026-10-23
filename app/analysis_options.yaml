@@ -20,13 +20,16 @@ analyzer:
 
 linter:
   rules:
-    - always_declare_return_types
-    - avoid_dynamic_calls
-    - avoid_print
-    - prefer_const_constructors
-    - prefer_const_declarations
-    - prefer_final_locals
-    - prefer_single_quotes
-    - require_trailing_commas
-    - sort_child_properties_last
-    - unawaited_futures
+    # 对「私有字段 + 公开具名参数」是误报：this._db 会把下划线名字变成参数名，
+    # 我们宁可多写一次赋值。
+    prefer_initializing_formals: false
+    always_declare_return_types: true
+    avoid_dynamic_calls: true
+    avoid_print: true
+    prefer_const_constructors: true
+    prefer_const_declarations: true
+    prefer_final_locals: true
+    prefer_single_quotes: true
+    require_trailing_commas: true
+    sort_child_properties_last: true
+    unawaited_futures: true

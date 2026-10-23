@@ -36,5 +36,15 @@ jobs:
       - name: 静态分析
         run: flutter analyze --no-fatal-infos
 
+      # 生成的 drift 代码必须与表定义同步，否则别人拉下来编译就炸。
+      - name: 校验生成的代码是最新的
+        run: |
+          dart run build_runner build --delete-conflicting-outputs
+          if ! git diff --quiet; then
+            echo "::error::生成代码与表定义不一致，请在本地跑 build_runner 后提交"
+            git --no-pager diff --stat
+            exit 1
+          fi
+
       - name: 单元测试
         run: flutter test --reporter expanded
