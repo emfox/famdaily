@@ -446,6 +446,147 @@ class AppDatabase extends _$AppDatabase {
     final row = await (selectOnly(changeLogs)..addColumns([count])).getSingle();
     return row.read(count) ?? 0;
   }
+
+  // ---------------------------------------------------------------------
+  // 备份（导出 / 恢复）
+  // ---------------------------------------------------------------------
+
+  /// 全量读：成员、项目、记录、设置。
+  ///
+  /// **包含软删除的行**：备份是"搬家"，不是"清理"。删掉的成员也要带上，
+  /// 否则恢复后历史记录会指向一个不存在的 member_id，日历上那些日子就白了。
+  Future<BackupSnapshot> readAllForBackup() async {
+    final memberRows = await select(members).get();
+    final taskRows = await select(tasks).get();
+    final checkinRows = await select(checkins).get();
+    final settingRows = await select(settings).get();
+
+    return BackupSnapshot(
+      members: memberRows.map<domain.Member>(Mappers.memberFromRow).toList(),
+      tasks: taskRows.map<domain.Task>(Mappers.taskFromRow).toList(),
+      checkins: checkinRows
+          .map<domain.CheckinRecord>(Mappers.checkinFromRow)
+          .toList(),
+      settings: {
+        // lastScheduledFor 是本机的排程进度，跟着备份走会让新机"以为今天
+        // 已经排过了"从而不排通知。这条不该搬。
+        for (final r in settingRows)
+          if (r.key != 'reminders.lastScheduledFor') r.key: r.value,
+      },
+    );
+  }
+
+  /// 覆盖式恢复：先清空，再整体写入。
+  ///
+  /// 全过程在一个事务里：导入到一半失败（比如文件里有个 project 指向
+  /// 不存在的 member）会整体回滚，用户的老数据还在。**这是这个功能
+  /// 唯一不能出错的地方**——备份恢复失败还把原数据清了，等于双重灾难。
+  Future<void> restoreAll(BackupSnapshot data, {required int nowMs}) async {
+    await transaction(() async {
+      // 顺序受外键约束：先删子表。
+      await delete(checkins).go();
+      await delete(slots).go();
+      await delete(tasks).go();
+      await delete(members).go();
+      await delete(settings).go();
+      await delete(changeLogs).go();
+
+      await batch((b) {
+        b.insertAll(
+          members,
+          [for (final m in data.members) Mappers.memberToCompanion(m)],
+          mode: InsertMode.insertOrReplace,
+        );
+        b.insertAll(
+          tasks,
+          [for (final t in data.tasks) Mappers.taskToCompanion(t)],
+          mode: InsertMode.insertOrReplace,
+        );
+        b.insertAll(
+          checkins,
+          [
+            for (final c in data.checkins)
+              Mappers.checkinToCompanion(c, nowMs),
+          ],
+          mode: InsertMode.insertOrReplace,
+        );
+        b.insertAll(
+          settings,
+          [
+            for (final e in data.settings.entries)
+              SettingsCompanion.insert(
+                key: e.key,
+                value: e.value,
+                updatedAtMs: nowMs,
+              ),
+          ],
+          mode: InsertMode.insertOrReplace,
+        );
+      });
+
+      // 恢复之后变更日志是空的——老数据对"同步"来说是全新的，
+      // 下次重排会把当前窗口重新算出来（槽位是派生数据，不用恢复）。
+      await _log('backup', 'restore', 'upsert', nowMs);
+    });
+  }
+
+  /// 一键清空（设置页底部的红字入口）。
+  ///
+  /// 跟恢复的区别：恢复会写回数据，清空之后是真的空。
+  Future<void> wipeAll({required int nowMs}) async {
+    await restoreAll(
+      const BackupSnapshot(members: [], tasks: [], checkins: [], settings: {}),
+      nowMs: nowMs,
+    );
+  }
+
+  /// 库文件里有多少行，用来在导出页显示"备份内容"。
+  Future<BackupCounts> counts() async {
+    // 三次 count 而不是一条 union：三张表结构不同，硬拼一条 SQL 省不了
+    // 多少时间（都是毫秒级），可读性却掉一大截。
+    final cols = [members.id.count(), tasks.id.count(), checkins.id.count()];
+    final m = await (selectOnly(members)..addColumns([cols[0]])).getSingle();
+    final t = await (selectOnly(tasks)..addColumns([cols[1]])).getSingle();
+    final c = await (selectOnly(checkins)..addColumns([cols[2]])).getSingle();
+    return BackupCounts(
+      members: m.read(cols[0]) ?? 0,
+      tasks: t.read(cols[1]) ?? 0,
+      checkins: c.read(cols[2]) ?? 0,
+    );
+  }
+}
+
+/// 备份的一份快照（与 `BackupData` 的区别：这份是纯数据库视角，
+/// 不带格式版本号与时间戳，由上层组装成 `BackupData`）。
+final class BackupSnapshot {
+  const BackupSnapshot({
+    required this.members,
+    required this.tasks,
+    required this.checkins,
+    required this.settings,
+  });
+
+  final List<domain.Member> members;
+  final List<domain.Task> tasks;
+  final List<domain.CheckinRecord> checkins;
+  final Map<String, String> settings;
+
+  bool get isEmpty => members.isEmpty && tasks.isEmpty && checkins.isEmpty;
+}
+
+/// 导出页要显示的计数。
+final class BackupCounts {
+  const BackupCounts({
+    required this.members,
+    required this.tasks,
+    required this.checkins,
+  });
+
+  final int members;
+  final int tasks;
+  final int checkins;
+
+  String get label => '$members 位成员 · $tasks 个项目 · $checkins 条记录';
 }
 
 /// 真机/模拟器上的数据库连接。

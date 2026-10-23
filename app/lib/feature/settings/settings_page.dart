@@ -1,8 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../app/app_boot.dart';
+import '../../data/backup/backup_service.dart';
 import '../../data/repo_impl/reminder_scheduler.dart';
 import '../../domain/notification/window_policy.dart';
+import 'backup_page.dart';
 
 /// 设置页。
 ///
@@ -15,6 +19,7 @@ class SettingsPage extends StatefulWidget {
     required this.onOpenDebug,
     this.onOpenMembers,
     this.memberCount,
+    this.backup,
     super.key,
   });
 
@@ -29,6 +34,9 @@ class SettingsPage extends StatefulWidget {
   /// 成员数，显示在「成员」右侧。null = 不显示。
   final int? memberCount;
 
+  /// 备份服务；null = 这一屏没有备份入口（测试里可以省掉）。
+  final BackupService? backup;
+
   @override
   State<SettingsPage> createState() => _SettingsPageState();
 }
@@ -37,6 +45,7 @@ class _SettingsPageState extends State<SettingsPage> {
   int _versionTaps = 0;
   bool _loading = true;
   bool _remindersOn = true;
+  String? _backupHint;
 
   @override
   void initState() {
@@ -47,11 +56,14 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _load() async {
     final db = widget.services.db;
     final raw = await db.getSetting(SettingsKeys.remindersEnabled);
+    // 备份提示是**轻提示**：超过 30 天才出现一行小字，不弹窗、不加红点。
+    final hint = await widget.backup?.reminderLine();
     if (!mounted) {
       return;
     }
     setState(() {
       _remindersOn = raw != 'false';
+      _backupHint = hint;
       _loading = false;
     });
   }
@@ -80,6 +92,30 @@ class _SettingsPageState extends State<SettingsPage> {
     if (_versionTaps >= 5) {
       _versionTaps = 0;
       widget.onOpenDebug();
+    }
+  }
+
+  Future<void> _openBackup() async {
+    final backup = widget.backup;
+    if (backup == null) {
+      return;
+    }
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => BackupPage(
+          service: backup,
+          reschedule: () async {
+            await widget.services.scheduler.reschedule(
+              trigger: RescheduleTrigger.dataChanged,
+            );
+          },
+        ),
+      ),
+    );
+    // 回来之后提示可能该消失/该出现，重读一次。
+    final hint = await backup.reminderLine();
+    if (mounted) {
+      setState(() => _backupHint = hint);
     }
   }
 
@@ -146,9 +182,14 @@ class _SettingsPageState extends State<SettingsPage> {
                   title: const Text('导出备份'),
                   // 需求里这条是 P0，但明确要求"藏得好一点"——
                   // 放这里而不是首页，是因为它是救命功能，不是日常功能。
-                  subtitle: const Text('存一份 JSON 到手机里，换机时能搬回来'),
+                  subtitle: Text(
+                    _backupHint ?? '存一份 JSON 到手机里，换机时能搬回来',
+                  ),
                   trailing: const Icon(Icons.chevron_right, size: 18),
-                  onTap: () => _notReady('导出备份'),
+                  enabled: widget.backup != null,
+                  onTap: widget.backup == null
+                      ? null
+                      : () => unawaited(_openBackup()),
                 ),
                 const Divider(height: 24),
 

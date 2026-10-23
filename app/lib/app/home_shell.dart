@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'app_boot.dart';
+import '../data/backup/backup_io.dart';
+import '../data/backup/backup_service.dart';
 import '../domain/notification/window_policy.dart' show RescheduleTrigger;
 import '../feature/history/history_page.dart';
 import '../feature/history/history_service.dart';
@@ -40,6 +42,11 @@ class _HomeShellState extends State<HomeShell> {
     ),
   );
 
+  late final BackupService _backup = BackupService(
+    db: widget.services.db,
+    gateway: const PlatformBackupGateway(),
+  );
+
   int? _memberCount;
 
   @override
@@ -71,6 +78,7 @@ class _HomeShellState extends State<HomeShell> {
             onOpenDebug: () => unawaited(_openDebug()),
             memberCount: _memberCount,
             onOpenMembers: () => unawaited(_openMembers()),
+            backup: _backup,
           ),
         ],
       ),
