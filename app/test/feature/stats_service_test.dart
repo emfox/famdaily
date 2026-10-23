@@ -366,6 +366,44 @@ void main() {
         reason: '未来的槽位进分母，完成率永远上不去',
       );
     });
+
+    test('没给通知权限，也要看得见本月的数据', () async {
+      final db = AppDatabase.forTesting(openTestConnection());
+      addTearDown(db.close);
+      await db.insertMember(
+        const domain.Member(
+          id: 'm1',
+          name: '我',
+          sortOrder: 0,
+          createdAtMs: _ts,
+          updatedAtMs: _ts,
+        ),
+        nowMs: _ts,
+      );
+      await db.insertTask(_task('t1', 'm1'), nowMs: _ts);
+
+      // 用户拒绝了通知权限。这不该影响"他该做几次、做了几次"。
+      final scheduler = ReminderScheduler(
+        db: db,
+        notifications: _DeniedGateway(),
+      );
+      await withClock(
+        Clock.fixed(DateTime(2026, 3, 20, 9)),
+        () => scheduler.reschedule(trigger: RescheduleTrigger.appLaunch),
+      );
+
+      final view = await StatsService(db).load(
+        period: StatsPeriod.thisMonth,
+        at: DateTime(2026, 3, 20, 12),
+      );
+
+      expect(
+        view.overall.expected,
+        20,
+        reason: '「别提醒我」不等于「别记我做没做」。这里为 0 就是用户说的统计里没内容',
+      );
+      expect(view.headline, contains('20 次'));
+    });
   });
 }
 
@@ -373,6 +411,28 @@ void main() {
 final class _NoopGateway implements NotificationGateway {
   @override
   Future<bool> hasPermission() async => true;
+
+  @override
+  Future<List<int>> pendingIds() async => const [];
+
+  @override
+  Future<int> applyPlan(List<PlannedNotification> plan) async => 0;
+
+  @override
+  Future<void> cancelSlot({
+    required String taskId,
+    required domain.LocalDate date,
+    required int slotIndex,
+  }) async {}
+
+  @override
+  Future<void> cancelAll() async {}
+}
+
+/// 用户拒绝了通知权限。
+final class _DeniedGateway implements NotificationGateway {
+  @override
+  Future<bool> hasPermission() async => false;
 
   @override
   Future<List<int>> pendingIds() async => const [];

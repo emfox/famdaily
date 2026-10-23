@@ -121,19 +121,22 @@ final class ReminderScheduler {
     final followupEnabled =
         (await _db.getSetting(SettingsKeys.followupEnabled)) != 'false';
 
+    final granted = await _notifications.hasPermission();
+
+    // 「要不要响」和「记不记分母」是两件事，**不能合成一个 early return**。
+    //
+    // 曾经这里是这样：不授权就直接 `return skipped`，一句都不落库。于是关掉
+    // 通知权限的人，slots 表永远是空的——统计的「本月」一片空白，而他其实
+    // 天天都在打卡。这也解释了一个难查的现象：同一条打过卡的日子，历史明细
+    // 里有记录（历史读 checkins 表），统计里却什么都没有（统计的分母读 slots）。
+    //
+    // 现在拆开：
+    //   - 全局关掉提醒 → 连槽位也不用排（用户连"该做"都不想看）；但仍要
+    //     把过去的日子补进库，否则统计会跟着一起消失；
+    //   - 只是没给系统权限 → 槽位照排、照落库，只是不往系统里塞通知。
+    //     这是"数据"与"提醒"的分离，槽位本来就是统计的分母。
     if (!enabled) {
       await _notifications.cancelAll();
-      await _db.setSetting(
-        SettingsKeys.lastScheduledFor,
-        today.toString(),
-        nowMs: now.millisecondsSinceEpoch,
-      );
-      return const RescheduleResult.skipped('提醒已全局关闭');
-    }
-
-    final granted = await _notifications.hasPermission();
-    if (!granted) {
-      return const RescheduleResult.skipped('没有通知权限');
     }
 
     // ---- 组装排程输入 ----
@@ -217,10 +220,12 @@ final class ReminderScheduler {
       expanded: upcoming,
       labels: labels,
       now: sched.LocalDateTimeRef(today, LocalTime(now.hour, now.minute)),
+      // 没给系统权限 / 全局关掉提醒时，规划器一条都不会出（见 PlannedFilters），
+      // 但**槽位照落库**——下面那段与 granted 无关。
       filters: PlannedFilters(
         doneKeys: doneKeys,
         quietHours: quiet,
-        remindersEnabled: enabled,
+        remindersEnabled: enabled && granted,
         followupDelayMinutes: followupMinutes,
         followupEnabled: followupEnabled,
       ),
@@ -229,6 +234,9 @@ final class ReminderScheduler {
     final capped = NotificationPlanner.cap(plannedAll, policy.maxScheduled);
 
     // ---- 落库槽位 ----
+    //
+    // 这一段**不看 granted**。槽位是统计和历史的分母，不是通知的附赠品；
+    // 用户拒绝通知权限，统计数据一样得是对的。
     //
     // 分两段写，起点不同：
     //   历史段 [月初, 昨天]：只插入，不删除（`backfillSlots`）；
@@ -252,6 +260,8 @@ final class ReminderScheduler {
     );
 
     // ---- 交给系统 ----
+    // 没有权限时 capped 本来就是空的，但这一步还会清掉系统里的残留，
+    // 所以照常调用。
     final scheduled = await _notifications.applyPlan(capped);
 
     await _db.setSetting(
@@ -266,7 +276,9 @@ final class ReminderScheduler {
       planned: plannedAll.length,
       scheduled: scheduled,
       truncated: expansion.truncated || capped.length < plannedAll.length,
-      skippedReason: null,
+      skippedReason: enabled && granted
+          ? null
+          : (enabled ? '没有通知权限，只记数据不提醒' : '提醒已全局关闭，只记数据不提醒'),
     );
     debugPrint('[reminder] $result');
     return result;

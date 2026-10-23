@@ -148,7 +148,7 @@ void main() {
     expect(result.scheduled, lessThanOrEqualTo(56));
   });
 
-  test('没有通知权限时不排，并说明原因', () async {
+  test('没有通知权限时不排通知，但槽位照落库', () async {
     gateway.permissionGranted = false;
     await db.insertTask(
       _task('t1', time: domain.FixedTimesRule([domain.LocalTime(8, 0)])),
@@ -157,8 +157,11 @@ void main() {
 
     final result = await run(build());
 
-    expect(result.skippedReason, '没有通知权限');
+    expect(result.skippedReason, '没有通知权限，只记数据不提醒');
     expect(gateway.applied, isEmpty);
+    // 槽位是统计的分母，不是通知的附赠品：拒绝了通知权限，
+    // 统计数据一样得是对的。这条断言守的是"别把两者合成一个 early return"。
+    expect(result.slots, greaterThan(0));
   });
 
   test('全局关闭提醒时清空所有通知', () async {
@@ -170,8 +173,10 @@ void main() {
 
     final result = await run(build());
 
-    expect(result.skippedReason, '提醒已全局关闭');
+    expect(result.skippedReason, '提醒已全局关闭，只记数据不提醒');
     expect(gateway.cancelAllCount, 1);
+    // 关掉提醒不再"什么都不记"：槽位照样落库，统计不受影响。
+    expect(result.slots, greaterThan(0));
   });
 
   test('提醒开关关闭的项目不进排程', () async {
@@ -483,6 +488,108 @@ void main() {
       );
     });
 
+  });
+
+  // -------------------------------------------------------------------
+  // 「要不要响」和「记不记分母」是两件事。
+  //
+  // 用户报障「重装了还是老行为，统计里没内容」，查下来就是这两件事被
+  // 合成了一句 early return：没给通知权限 → 直接 skipped → 一句都不落库。
+  // 于是拒绝通知的人，统计永远是空的，而他其实天天在打卡。
+  // 更迷惑的是：那些天打过卡的记录在历史明细里看得见（历史读 checkins），
+  // 统计里却什么都没有（统计的分母读 slots）。
+  // -------------------------------------------------------------------
+
+  group('没有通知权限，统计也不能是空的', () {
+    Future<RescheduleResult> runAt(
+      ReminderScheduler scheduler,
+      DateTime moment,
+    ) {
+      return withClock(
+        Clock.fixed(moment),
+        () => scheduler.reschedule(trigger: RescheduleTrigger.appLaunch),
+      );
+    }
+
+    test('拒绝通知权限后，本月的槽位照旧补齐', () async {
+      gateway.permissionGranted = false;
+      await db.insertTask(
+        _task('t1', time: domain.FixedTimesRule([domain.LocalTime(8, 0)])),
+        nowMs: _nowMs,
+      );
+
+      final result = await runAt(build(), DateTime(2026, 3, 20, 9));
+
+      // 一条通知都不该排出去。
+      expect(gateway.applied, isEmpty);
+
+      // 但分母要有：1 号到 20 号，20 条。
+      final slots = await db.slotsBetween(
+        domain.LocalDate(2026, 3, 1),
+        domain.LocalDate(2026, 3, 20),
+      );
+      expect(
+        slots,
+        hasLength(20),
+        reason: '没权限也要记数据。这里为 0，用户看到的就是「统计里没内容」',
+      );
+      // result.slots 是**整个展开窗口**的槽位数（含今天之后的），
+      // 所以它比 20 大，这里只断言"确实展开了"。
+      expect(result.slots, greaterThanOrEqualTo(20));
+      expect(result.skippedReason, isNotNull, reason: '得让人知道为什么没提醒');
+    });
+
+    test('全局关掉提醒，槽位同样照旧落库', () async {
+      await db.insertTask(
+        _task('t1', time: domain.FixedTimesRule([domain.LocalTime(8, 0)])),
+        nowMs: _nowMs,
+      );
+      await db.setSetting(SettingsKeys.remindersEnabled, 'false', nowMs: _nowMs);
+
+      await runAt(build(), DateTime(2026, 3, 20, 9));
+
+      expect(
+        await db.slotsBetween(
+          domain.LocalDate(2026, 3, 1),
+          domain.LocalDate(2026, 3, 20),
+        ),
+        hasLength(20),
+        reason: '关掉提醒是「别叫我」，不是「别记我做没做」',
+      );
+      expect(gateway.applied, isEmpty);
+    });
+
+    test('后来给了权限，重排一次就能把提醒补上', () async {
+      gateway.permissionGranted = false;
+      await db.insertTask(
+        _task('t1', time: domain.FixedTimesRule([domain.LocalTime(8, 0)])),
+        nowMs: _nowMs,
+      );
+      final scheduler = build();
+      await runAt(scheduler, DateTime(2026, 3, 20, 9));
+      expect(gateway.applied, isEmpty);
+
+      // 用户去系统设置里把通知打开了，回到 App。
+      gateway.permissionGranted = true;
+      final result = await withClock(
+        Clock.fixed(DateTime(2026, 3, 20, 10)),
+        () => scheduler.reschedule(trigger: RescheduleTrigger.resumed),
+      );
+
+      // resumed 在同一天会被 `shouldReschedule` 拦住，得靠数据变更放行。
+      expect(result.skippedReason, '未跨天，跳过');
+
+      await withClock(
+        Clock.fixed(DateTime(2026, 3, 20, 10)),
+        () =>
+            scheduler.reschedule(trigger: RescheduleTrigger.dataChanged),
+      );
+      expect(
+        gateway.applied,
+        isNotEmpty,
+        reason: '权限补上了，通知得能重新排出去',
+      );
+    });
   });
 
   test('条数上限：宁可少排几天，也绝不越过 56 条', () async {

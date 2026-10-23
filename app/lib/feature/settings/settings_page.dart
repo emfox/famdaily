@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../app/app_boot.dart';
+import '../../app/build_info.dart';
 import '../../data/backup/backup_service.dart';
 import '../../data/repo_impl/reminder_scheduler.dart';
 import '../../domain/notification/window_policy.dart';
@@ -222,7 +223,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 ListTile(
                   leading: const Icon(Icons.info_outline),
                   title: const Text('版本'),
-                  subtitle: const Text('0.1.0（开发中）'),
+                  subtitle: Text('0.1.0（开发版 · ${BuildInfo.label}）'),
                   onTap: _onVersionTap,
                 ),
                 Padding(
