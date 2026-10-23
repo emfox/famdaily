@@ -3,7 +3,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'app/app_boot.dart';
 import 'app/bootstrap_page.dart';
-import 'feature/home/home_screen.dart';
+import 'app/home_shell.dart';
 
 /// 进程级依赖都从这里走。
 ///
@@ -48,7 +48,7 @@ class _FamdailyAppState extends State<FamdailyApp> {
       ),
       home: BootstrapPage(
         boot: _boot,
-        builder: (context, services) => HomeScreen(services: services),
+        builder: (context, services) => HomeShell(services: services),
       ),
     );
   }
