@@ -240,4 +240,60 @@ void main() {
     await tester.pump();
     expect(taps, [false, true]);
   });
+
+  testWidgets('成员视图点头像/名字 → onTapMember（ui-spec §5 的入口）', (tester) async {
+    await db.insertTask(_task('t1', 'm1', '早读', 7), nowMs: _ts);
+    await db
+        .into(db.members)
+        .insert(Mappers.memberToCompanion(_member('m2', '妈妈', 1)));
+    await db
+        .into(db.members)
+        .insert(Mappers.memberToCompanion(_member('m3', '小明', 2)));
+
+    final view = await service.load(at: DateTime(2025, 3, 1, 9, 0));
+    final tapped = <String>[];
+
+    await tester.pumpWidget(
+      _wrap(
+        TodayPage(
+          view: view,
+          layout: HomeLayout.members,
+          onLayoutChanged: (_) {},
+          onTapRow: (_, {required tappedCircle}) {},
+          onTapMember: (m) => tapped.add(m.id),
+          onNewTask: () {},
+          onRefresh: () async {},
+          loading: false,
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('爷爷'));
+    await tester.pump();
+    expect(tapped, ['m1']);
+  });
+
+  testWidgets('没给 onTapMember 时成员视图不显示箭头（只读场景）', (tester) async {
+    await db
+        .into(db.members)
+        .insert(Mappers.memberToCompanion(_member('m2', '妈妈', 1)));
+    await db.insertTask(_task('t1', 'm1', '早读', 7), nowMs: _ts);
+    final view = await service.load(at: DateTime(2025, 3, 1, 9, 0));
+
+    await tester.pumpWidget(
+      _wrap(
+        TodayPage(
+          view: view,
+          layout: HomeLayout.members,
+          onLayoutChanged: (_) {},
+          onTapRow: (_, {required tappedCircle}) {},
+          onNewTask: () {},
+          onRefresh: () async {},
+          loading: false,
+        ),
+      ),
+    );
+
+    expect(find.byIcon(Icons.chevron_right), findsNothing);
+  });
 }

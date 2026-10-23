@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../domain/model/checkin_row.dart';
 import '../../domain/model/local_date.dart';
 import '../../domain/model/local_time.dart';
+import '../../domain/model/member.dart' as domain;
 import '../members/member_avatar.dart';
 import '../theme/status_style.dart';
 import 'today_service.dart';
@@ -17,6 +18,7 @@ class TodayPage extends StatelessWidget {
     required this.layout,
     required this.onLayoutChanged,
     required this.onTapRow,
+    this.onTapMember,
     required this.onNewTask,
     required this.onRefresh,
     required this.loading,
@@ -29,6 +31,10 @@ class TodayPage extends StatelessWidget {
 
   /// 点某一行（勾选或整行）时回调。
   final void Function(CheckinRow row, {required bool tappedCircle}) onTapRow;
+
+  /// 点成员视图里的头像/名字 → 成员详情（ui-spec §5）。
+  /// null 时不响应（只读场景，例如截图或预览）。
+  final ValueChanged<domain.Member>? onTapMember;
 
   final VoidCallback onNewTask;
   final Future<void> Function() onRefresh;
@@ -155,26 +161,43 @@ class TodayPage extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                  child: Row(
-                    children: [
-                      MemberAvatar(member: section.member, size: 28),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          section.member.name,
-                          style: Theme.of(context).textTheme.titleMedium,
+                // 头像和名字都能点进成员详情（ui-spec §5 的入口之一：
+                // "今日清单成员视图点头像"）。整行只有这一小块响应，
+                // 不能把整行做成按钮——那会和下面的打卡行抢地盘。
+                InkWell(
+                  onTap: onTapMember == null
+                      ? null
+                      : () => onTapMember!(section.member),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                    child: Row(
+                      children: [
+                        MemberAvatar(member: section.member, size: 28),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            section.member.name,
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
                         ),
-                      ),
-                      Text(
-                        '${section.doneCount} / ${section.totalCount}',
-                        style: Theme.of(context).textTheme.labelLarge
-                            ?.copyWith(
+                        Text(
+                          '${section.doneCount} / ${section.totalCount}',
+                          style: Theme.of(context).textTheme.labelLarge
+                              ?.copyWith(
+                                color: Theme.of(context).colorScheme.outline,
+                              ),
+                        ),
+                        if (onTapMember != null)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 4),
+                            child: Icon(
+                              Icons.chevron_right,
+                              size: 18,
                               color: Theme.of(context).colorScheme.outline,
                             ),
-                      ),
-                    ],
+                          ),
+                      ],
+                    ),
                   ),
                 ),
                 const Divider(height: 1),

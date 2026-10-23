@@ -14,6 +14,8 @@ import '../../domain/model/member.dart';
 import '../../domain/model/task.dart';
 import '../../domain/model/task_status.dart';
 import '../../domain/notification/window_policy.dart';
+import '../members/member_detail_page.dart';
+import '../members/member_service.dart';
 import '../task_detail/task_detail_page.dart';
 import '../task_detail/task_detail_service.dart';
 import '../task_edit/task_edit_page.dart';
@@ -275,6 +277,27 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
+  /// 从成员视图点头像进成员详情（ui-spec §5）。
+  ///
+  /// 这里用的是 `HomeShell` 那套 MemberService 的同一个构造方式：
+  /// 成员名会进通知文案，改完必须重排，所以 onDataChanged 要接上。
+  Future<void> _openMember(Member m) async {
+    final service = MemberService(
+      db: widget.services.db,
+      onDataChanged: () => widget.services.scheduler.reschedule(
+        trigger: RescheduleTrigger.dataChanged,
+      ),
+    );
+    await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => MemberDetailPage(service: service, memberId: m.id),
+      ),
+    );
+    if (mounted) {
+      await _load(silent: true);
+    }
+  }
+
   /// 打开某一项的详情（点行文字区进入）。
   ///
   /// 回来无条件刷一次：详情页里可能点了「编辑」，改了规则就得重读
@@ -434,6 +457,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       onLayoutChanged: (l) => unawaited(_setLayout(l)),
       onTapRow: (row, {required tappedCircle}) =>
           unawaited(_onTapRow(row, tappedCircle: tappedCircle)),
+      onTapMember: (m) => unawaited(_openMember(m)),
       onNewTask: () => unawaited(_newTask()),
       onRefresh: () async {
         await _load(silent: true);
