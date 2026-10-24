@@ -29,7 +29,11 @@ final class _FakeTransport implements SyncTransport {
   Map<String, Object?> body = {};
 
   @override
-  Future<HttpResponseData> get(Uri url, {Map<String, String> headers = const {}}) async {
+  Future<HttpResponseData> get(
+    Uri url, {
+    Map<String, String> headers = const {},
+    bool keepRawBody = false,
+  }) async {
     previewCalls++;
     if (status != 200) {
       return HttpResponseData(statusCode: status, json: body);
@@ -338,10 +342,7 @@ void main() {
     Future<void> pumpSettings(WidgetTester tester) async {
       await tester.pumpWidget(
         MaterialApp(
-          home: SettingsPage(
-            services: services,
-            onOpenDebug: () {},
-          ),
+          home: SettingsPage(services: services, onOpenDebug: () {}),
         ),
       );
       await tester.pumpAndSettle();

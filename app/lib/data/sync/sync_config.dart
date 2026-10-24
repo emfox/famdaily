@@ -103,9 +103,7 @@ final class SyncConfigStore {
   Future<void> saveSince(int cursor) async {
     // 推进水位不走 setSetting 的 nowMs 语义：这不是一次用户操作，
     // 不需要在 change_log 里留痕（留了反而会让 pendingSyncCount 虚高）。
-    await db.applyRemoteSetting(
-      _rawSetting(SyncKeys.since, '$cursor'),
-    );
+    await db.applyRemoteSetting(_rawSetting(SyncKeys.since, '$cursor'));
   }
 
   Future<int?> lastSuccessAtMs() async {
@@ -114,7 +112,9 @@ final class SyncConfigStore {
   }
 
   Future<void> markSuccess(int nowMs) async {
-    await db.applyRemoteSetting(_rawSetting(SyncKeys.lastSuccessAtMs, '$nowMs'));
+    await db.applyRemoteSetting(
+      _rawSetting(SyncKeys.lastSuccessAtMs, '$nowMs'),
+    );
     await db.clearSetting(SyncKeys.lastError, nowMs: nowMs);
     await db.clearSetting(SyncKeys.lastErrorAtMs, nowMs: nowMs);
   }

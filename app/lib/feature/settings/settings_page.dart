@@ -192,6 +192,10 @@ class _SettingsPageState extends State<SettingsPage> {
       MaterialPageRoute(
         builder: (_) => BackupPage(
           service: backup,
+          // 云端导出用。**配没配对交给页面自己判断**：这里判断一次、
+          // 用户在同步页又配了一次，返回栈退回来时这个判断就过期了。
+          // 页面每次 `initState` 重新问，不会错。
+          sync: widget.services.sync,
           reschedule: () async {
             await widget.services.scheduler.reschedule(
               trigger: RescheduleTrigger.dataChanged,
@@ -241,7 +245,9 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                   trailing: const Icon(Icons.chevron_right, size: 18),
                   enabled: _remindersOn,
-                  onTap: _remindersOn ? () => unawaited(_openReminders()) : null,
+                  onTap: _remindersOn
+                      ? () => unawaited(_openReminders())
+                      : null,
                 ),
                 const Divider(height: 24),
 
@@ -283,9 +289,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   title: const Text('导出备份'),
                   // 需求里这条是 P0，但明确要求"藏得好一点"——
                   // 放这里而不是首页，是因为它是救命功能，不是日常功能。
-                  subtitle: Text(
-                    _backupHint ?? '存一份 JSON 到手机里，换机时能搬回来',
-                  ),
+                  subtitle: Text(_backupHint ?? '存一份 JSON 到手机里，换机时能搬回来'),
                   trailing: const Icon(Icons.chevron_right, size: 18),
                   enabled: widget.backup != null,
                   onTap: widget.backup == null
@@ -340,9 +344,7 @@ class _SyncTile extends StatelessWidget {
         final failed = status.outcome == SyncOutcome.failed;
         final theme = Theme.of(context);
         return ListTile(
-          leading: Icon(
-            failed ? Icons.sync_problem : Icons.devices_outlined,
-          ),
+          leading: Icon(failed ? Icons.sync_problem : Icons.devices_outlined),
           title: const Text('多台手机同步'),
           subtitle: const Text('家人在自己手机上打卡，这里也看得到'),
           trailing: Row(

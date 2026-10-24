@@ -29,6 +29,7 @@ import {
 } from './src/pair.mjs';
 import { createSyncHandler } from './src/sync.mjs';
 import { handleMemberLink, handleMemberUnlink } from './src/web_link.mjs';
+import { handleExport, exportFileName } from './src/export_data.mjs';
 import { handleToday, handleCheckin } from './src/web_api.mjs';
 import {
   WEB_TICKET_TTL_MS,
@@ -189,6 +190,31 @@ export async function createApp({
     'POST /members/:id/unlink': (ctx) => {
       authed((c) => {
         sendJson(c.res, 200, handleMemberUnlink(c, deps));
+      })(ctx);
+    },
+
+    // ---- 导出备份（App 侧，走设备 Bearer）----
+    //
+    // 路径是 `/export` 而不是 `/backup`：它是**读**操作（GET），
+    // 名字要说清楚"只读出去、不动数据"。恢复仍然只能在 App 里做，
+    // 服务端不提供写回来的接口 —— 一个能覆盖全库的 HTTP 端点，
+    // 值得比现在多十倍的谨慎，而现在还没到需要它的时候。
+    'GET /export': (ctx) => {
+      authed((c) => {
+        const payload = handleExport(c, deps);
+        const body = JSON.stringify(payload, null, 2);
+        c.res.writeHead(200, {
+          'content-type': 'application/json; charset=utf-8',
+          'content-length': Buffer.byteLength(body),
+          // 让浏览器直接存成文件，而不是在标签页里铺一大段 JSON。
+          // `filename*` 用 RFC 5987 的写法给非 ASCII 留后路；这里文件名
+          // 本来就全是 ASCII，`filename` 只是一个兼容旧客户端的副本。
+          'content-disposition': `attachment; filename="${exportFileName()}"; filename*=UTF-8''${encodeURIComponent(exportFileName())}`,
+          // 备份里有全家人的名字和打卡记录，**不允许任何中间层缓存**。
+          'cache-control': 'no-store',
+          'x-content-type-options': 'nosniff',
+        });
+        c.res.end(body);
       })(ctx);
     },
 

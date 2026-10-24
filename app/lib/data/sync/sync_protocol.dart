@@ -199,15 +199,25 @@ final class TaskDto {
       iconId: _stringOrNull(j['icon_id'], 'task.icon_id', max: 40),
       repeatJson: _string(j['repeat_json'], 'task.repeat_json', max: 4000),
       timeJson: _string(j['time_json'], 'task.time_json', max: 4000),
-      courseStart: _stringOrNull(j['course_start'], 'task.course_start', max: 10),
+      courseStart: _stringOrNull(
+        j['course_start'],
+        'task.course_start',
+        max: 10,
+      ),
       courseEnd: _stringOrNull(j['course_end'], 'task.course_end', max: 10),
-      courseTotalDays: _intOrNull(j['course_total_days'], 'task.course_total_days'),
+      courseTotalDays: _intOrNull(
+        j['course_total_days'],
+        'task.course_total_days',
+      ),
       status: status,
       reminderEnabled: j['reminder_enabled'] == null
           ? true
-          : _bool(j['reminder_enabled'] is int
-                ? j['reminder_enabled'] == 1
-                : j['reminder_enabled']!, 'task.reminder_enabled'),
+          : _bool(
+              j['reminder_enabled'] is int
+                  ? j['reminder_enabled'] == 1
+                  : j['reminder_enabled']!,
+              'task.reminder_enabled',
+            ),
       sortOrder: _int(j['sort_order'], 'task.sort_order', fallback: 0),
       rulesEffectiveFrom: _stringOrNull(
         j['rules_effective_from'],
@@ -453,7 +463,11 @@ final class SyncRequest {
 
 /// 一条被服务端拒绝的推送。
 final class SyncReject {
-  const SyncReject({required this.kind, required this.id, required this.reason});
+  const SyncReject({
+    required this.kind,
+    required this.id,
+    required this.reason,
+  });
 
   factory SyncReject.fromWire(Map<String, Object?> j) => SyncReject(
     kind: _string(j['kind'], 'reject.kind', max: 20),
@@ -600,6 +614,29 @@ final class PairPreview {
   final String familyName;
   final List<String> memberNames;
   final int expiresAtMs;
+}
+
+/// 一次"发打卡链接"的结果。
+///
+/// [url] 里的 token **只在这一刻存在**（服务端存的是哈希），所以这个对象
+/// 的生命周期就是"弹窗打开 → 用户复制/分享 → 关掉"，**不要落库**。
+final class MemberLinkResult {
+  const MemberLinkResult({required this.url, required this.issuedAtMs});
+
+  /// 完整链接，形如 `https://host/m/<token>`。
+  final String url;
+
+  /// 服务端签发时间。用来显示"刚刚生成"，也用来判断这个链接是不是旧的。
+  final int issuedAtMs;
+
+  /// 给用户看的短形式：域名 + 省略号。
+  ///
+  /// 弹窗里直接把整个 URL 摆出来会让老人以为要自己敲一遍；
+  /// 真正要用的是"复制"和"分享"两个按钮。
+  String get displayHost {
+    final parsed = Uri.tryParse(url);
+    return parsed?.host ?? url;
+  }
 }
 
 /// 同步码规范化。

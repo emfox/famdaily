@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 
+import '../../data/sync/sync_service.dart';
 import '../../domain/model/local_date.dart';
 import '../../domain/model/member.dart';
 import '../../domain/stats/stats.dart';
 import 'member_avatar.dart';
 import 'member_edit_page.dart';
+import 'member_link_sheet.dart';
 import 'member_service.dart';
 import '../../app/test_clock.dart';
 
@@ -18,6 +20,7 @@ class MemberDetailPage extends StatefulWidget {
     required this.service,
     required this.memberId,
     this.onOpenTasks,
+    this.sync,
     super.key,
   });
 
@@ -26,6 +29,13 @@ class MemberDetailPage extends StatefulWidget {
 
   /// 点「他的打卡项」时回调；null 时该项置灰（详情页也能独立存在）。
   final ValueChanged<Member>? onOpenTasks;
+
+  /// 同步服务。为 null 时「生成打卡链接」会说明"还没配对"。
+  ///
+  /// 做成可空而不是 required：详情页在 Widget 测试里被单独构造过很多次，
+  /// 为了一个新功能让所有测试都去造一个 SyncService 不划算，而且那些测试
+  /// 本来就不关心同步。
+  final SyncService? sync;
 
   @override
   State<MemberDetailPage> createState() => _MemberDetailPageState();
@@ -38,10 +48,31 @@ class _MemberDetailPageState extends State<MemberDetailPage> {
   bool _dirty = false;
   bool _loading = true;
 
+  /// 配没配对。只影响「生成打卡链接」的副标题文案。
+  ///
+  /// **必须是异步问出来的**：`widget.sync != null` 只说明"装配时给了服务"，
+  /// 而 `AppServices.sync` 是永远存在的（没配对时它只是什么都不做）。
+  /// 第一版就写成了 `widget.sync != null`，结果是**没配对的人看到
+  /// "让成员自己在手机浏览器里打"**，点进去才被拒 —— 先给希望再拒绝。
+  ///
+  /// `null` = 还没问完。这时副标题留空，不先显示一句话再改掉。
+  bool? _paired;
+
   @override
   void initState() {
     super.initState();
     _load();
+    _loadPaired();
+  }
+
+  Future<void> _loadPaired() async {
+    final sync = widget.sync;
+    if (sync == null) {
+      if (mounted) setState(() => _paired = false);
+      return;
+    }
+    final paired = await sync.isPaired();
+    if (mounted) setState(() => _paired = paired);
   }
 
   Future<void> _load() async {
@@ -111,15 +142,32 @@ class _MemberDetailPageState extends State<MemberDetailPage> {
       ),
     );
     if (ok ?? false) {
-      await widget.service.remove(
-        m.id,
-        nowMs: appNow().millisecondsSinceEpoch,
-      );
+      await widget.service.remove(m.id, nowMs: appNow().millisecondsSinceEpoch);
       if (!mounted) {
         return;
       }
       Navigator.of(context).pop(true);
     }
+  }
+
+  Future<void> _openLinkSheet() async {
+    final m = _member;
+    if (m == null) {
+      return;
+    }
+    final sync = widget.sync;
+    if (sync == null) {
+      // 装配时没给 SyncService（只可能出现在测试里）：明确说一句，
+      // 而不是弹一个空弹窗或者什么都不发生。
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('同步还没启用，没法生成链接')));
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (_) => MemberLinkSheet(sync: sync, member: m),
+    );
   }
 
   @override
@@ -189,13 +237,24 @@ class _MemberDetailPageState extends State<MemberDetailPage> {
                         ? null
                         : () => widget.onOpenTasks!(m),
                   ),
-                  const ListTile(
-                    leading: Icon(Icons.link),
-                    title: Text('生成打卡链接'),
-                    subtitle: Text('让成员自己在手机上打，下一版'),
-                    trailing: Icon(Icons.chevron_right, size: 18),
-                    enabled: false,
-                  ),                  const SizedBox(height: 12),
+                  ListTile(
+                    leading: const Icon(Icons.link),
+                    title: const Text('生成打卡链接'),
+                    subtitle: Text(switch (_paired) {
+                      true => '让成员自己在手机浏览器里打',
+                      false => '需要先在「设置 → 同步」里配对',
+                      // 还没问完（读 settings 表是异步的）：留空。
+                      // 先显示一句再改掉，比晚半拍出现更让人困惑。
+                      null => '',
+                    }),
+                    trailing: const Icon(Icons.chevron_right, size: 18),
+                    // 没配对时**不置灰**，而是点进去说明原因。
+                    // 置灰在这里是有害的：老人只会看到一行灰字，不知道自己
+                    // 该做什么；而真正的原因（要先配对）在另一个页面里。
+                    enabled: !_loading,
+                    onTap: _loading ? null : _openLinkSheet,
+                  ),
+                  const SizedBox(height: 12),
                   const Divider(height: 1),
                   ListTile(
                     leading: Icon(

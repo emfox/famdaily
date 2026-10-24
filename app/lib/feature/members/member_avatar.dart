@@ -39,11 +39,7 @@ class MemberAvatar extends StatelessWidget {
           borderRadius: BorderRadius.circular(size * 0.32),
         ),
         alignment: Alignment.center,
-        child: Icon(
-          option.icon,
-          size: size * 0.58,
-          color: option.fg,
-        ),
+        child: Icon(option.icon, size: size * 0.58, color: option.fg),
       );
     }
 

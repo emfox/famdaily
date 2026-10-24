@@ -48,7 +48,11 @@ final class _FakeTransport implements SyncTransport {
   }
 
   @override
-  Future<HttpResponseData> get(Uri url, {Map<String, String> headers = const {}}) async {
+  Future<HttpResponseData> get(
+    Uri url, {
+    Map<String, String> headers = const {},
+    bool keepRawBody = false,
+  }) async {
     calls.add(url);
     this.headers.add(headers);
     bodies.add(null);
@@ -110,9 +114,7 @@ Map<String, Object?> _asRow(Map<String, Object?> dto) {
     'doneAtMs': 'done_at_ms',
     'dueAtMinuteOfDay': 'due_at_minute_of_day',
   };
-  return {
-    for (final e in dto.entries) camelToSnake[e.key] ?? e.key: e.value,
-  };
+  return {for (final e in dto.entries) camelToSnake[e.key] ?? e.key: e.value};
 }
 
 List<Object?> _asRows(Object? list) => [
@@ -133,12 +135,9 @@ void main() {
 
   /// 装配。默认已配对。
   void build({
-    FutureOr<HttpResponseData> Function(Uri, Map<String, Object?>?)?
-    respond,
+    FutureOr<HttpResponseData> Function(Uri, Map<String, Object?>?)? respond,
   }) {
-    transport = _FakeTransport(
-      respond ?? (_, _) => _ok(_emptyResponse()),
-    );
+    transport = _FakeTransport(respond ?? (_, _) => _ok(_emptyResponse()));
     service = SyncService(
       db: db,
       config: config,
@@ -191,25 +190,33 @@ void main() {
     setUp(pair);
 
     test('推全量：members 含已删成员，checkins 显式给空数组', () async {
-      await db.into(db.members).insert(Mappers.memberToCompanion(
-        domain.Member(
-          id: 'm1',
-          name: '我',
-          sortOrder: 0,
-          createdAtMs: now,
-          updatedAtMs: now,
-        ),
-      ));
-      await db.into(db.members).insert(Mappers.memberToCompanion(
-        domain.Member(
-          id: 'm2',
-          name: '已删',
-          sortOrder: 1,
-          createdAtMs: now,
-          updatedAtMs: now,
-          deletedAtMs: now,
-        ),
-      ));
+      await db
+          .into(db.members)
+          .insert(
+            Mappers.memberToCompanion(
+              domain.Member(
+                id: 'm1',
+                name: '我',
+                sortOrder: 0,
+                createdAtMs: now,
+                updatedAtMs: now,
+              ),
+            ),
+          );
+      await db
+          .into(db.members)
+          .insert(
+            Mappers.memberToCompanion(
+              domain.Member(
+                id: 'm2',
+                name: '已删',
+                sortOrder: 1,
+                createdAtMs: now,
+                updatedAtMs: now,
+                deletedAtMs: now,
+              ),
+            ),
+          );
 
       await service.syncNow();
 
@@ -272,7 +279,11 @@ void main() {
       transport.respond = (_, _) => _ok(
         _emptyResponse(
           rejected: [
-            {'kind': 'checkin', 'id': 't1/2025-01-01/0', 'reason': 'FOREIGN KEY'},
+            {
+              'kind': 'checkin',
+              'id': 't1/2025-01-01/0',
+              'reason': 'FOREIGN KEY',
+            },
           ],
         ),
       );
@@ -297,7 +308,11 @@ void main() {
             'settings': [
               // 恶意/错误的服务端试图改本机的 token
               {'key': 'sync.token', 'value': 'hijacked', 'updated_at_ms': now},
-              {'key': 'reminders.enabled', 'value': 'false', 'updated_at_ms': now},
+              {
+                'key': 'reminders.enabled',
+                'value': 'false',
+                'updated_at_ms': now,
+              },
             ],
           },
         ),
@@ -340,10 +355,8 @@ void main() {
     setUp(pair);
 
     test('401 不重试：状态是 auth，错误记在库', () async {
-      transport.respond = (_, _) => const HttpResponseData(
-        statusCode: 401,
-        json: {'error': 'token 无效'},
-      );
+      transport.respond = (_, _) =>
+          const HttpResponseData(statusCode: 401, json: {'error': 'token 无效'});
 
       final s = await service.syncNow();
 
@@ -373,10 +386,8 @@ void main() {
     });
 
     test('失败了水位不推进（否则这批数据永久丢失）', () async {
-      transport.respond = (_, _) => const HttpResponseData(
-        statusCode: 500,
-        json: {'error': 'boom'},
-      );
+      transport.respond = (_, _) =>
+          const HttpResponseData(statusCode: 500, json: {'error': 'boom'});
 
       await service.syncNow();
 
@@ -389,10 +400,8 @@ void main() {
       await service.syncNow();
       final okAt = (await service.syncNow()).lastSuccessAtMs;
 
-      transport.respond = (_, _) => const HttpResponseData(
-        statusCode: 401,
-        json: {'error': 'x'},
-      );
+      transport.respond = (_, _) =>
+          const HttpResponseData(statusCode: 401, json: {'error': 'x'});
       await service.syncNow();
       expect(service.status.errorKind, SyncErrorKind.auth);
 
@@ -462,28 +471,36 @@ void main() {
       addTearDown(other.close);
 
       // A：一个成员 + 一个项目 + 一条打卡
-      await db.into(db.members).insert(Mappers.memberToCompanion(
-        domain.Member(
-          id: 'm1',
-          name: '我',
-          sortOrder: 0,
-          createdAtMs: now,
-          updatedAtMs: now,
-        ),
-      ));
-      await db.into(db.tasks).insert(Mappers.taskToCompanion(
-        domain.Task(
-          id: 't1',
-          memberId: 'm1',
-          name: '吃药',
-          repeat: const RepeatRule(),
-          time: FixedTimesRule([LocalTime(8, 0)]),
-          course: domain.Course.none,
-          status: TaskStatus.active,
-          createdAtMs: now,
-          updatedAtMs: now,
-        ),
-      ));
+      await db
+          .into(db.members)
+          .insert(
+            Mappers.memberToCompanion(
+              domain.Member(
+                id: 'm1',
+                name: '我',
+                sortOrder: 0,
+                createdAtMs: now,
+                updatedAtMs: now,
+              ),
+            ),
+          );
+      await db
+          .into(db.tasks)
+          .insert(
+            Mappers.taskToCompanion(
+              domain.Task(
+                id: 't1',
+                memberId: 'm1',
+                name: '吃药',
+                repeat: const RepeatRule(),
+                time: FixedTimesRule([LocalTime(8, 0)]),
+                course: domain.Course.none,
+                status: TaskStatus.active,
+                createdAtMs: now,
+                updatedAtMs: now,
+              ),
+            ),
+          );
       await db.upsertCheckin(
         domain.CheckinRecord(
           id: 'c1',
@@ -584,28 +601,36 @@ void main() {
         ),
         nowMs: now,
       );
-      await db.into(db.members).insert(Mappers.memberToCompanion(
-        domain.Member(
-          id: 'm1',
-          name: '我',
-          sortOrder: 0,
-          createdAtMs: now,
-          updatedAtMs: now,
-        ),
-      ));
-      await db.into(db.tasks).insert(Mappers.taskToCompanion(
-        domain.Task(
-          id: 't1',
-          memberId: 'm1',
-          name: '吃药',
-          repeat: const RepeatRule(),
-          time: FixedTimesRule([LocalTime(8, 0)]),
-          course: domain.Course.none,
-          status: TaskStatus.active,
-          createdAtMs: now,
-          updatedAtMs: now,
-        ),
-      ));
+      await db
+          .into(db.members)
+          .insert(
+            Mappers.memberToCompanion(
+              domain.Member(
+                id: 'm1',
+                name: '我',
+                sortOrder: 0,
+                createdAtMs: now,
+                updatedAtMs: now,
+              ),
+            ),
+          );
+      await db
+          .into(db.tasks)
+          .insert(
+            Mappers.taskToCompanion(
+              domain.Task(
+                id: 't1',
+                memberId: 'm1',
+                name: '吃药',
+                repeat: const RepeatRule(),
+                time: FixedTimesRule([LocalTime(8, 0)]),
+                course: domain.Course.none,
+                status: TaskStatus.active,
+                createdAtMs: now,
+                updatedAtMs: now,
+              ),
+            ),
+          );
       await db.upsertCheckin(
         domain.CheckinRecord(
           id: 'c1',

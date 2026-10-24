@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../data/sync/sync_service.dart';
 import '../../domain/model/member.dart';
 import 'member_avatar.dart';
 import 'member_detail_page.dart';
@@ -12,9 +13,12 @@ import '../../app/test_clock.dart';
 /// 排序用上移/下移按钮而不是纯拖拽：拖拽在长列表里落位很不精确，
 /// 老人手上更容易"拖一半弹回去"。拖拽手势一并保留，谁顺手用谁。
 class MemberListPage extends StatefulWidget {
-  const MemberListPage({required this.service, super.key});
+  const MemberListPage({required this.service, this.sync, super.key});
 
   final MemberService service;
+
+  /// 往下传给详情页的「生成打卡链接」。为 null 时那一项只说明原因。
+  final SyncService? sync;
 
   @override
   State<MemberListPage> createState() => _MemberListPageState();
@@ -52,8 +56,11 @@ class _MemberListPageState extends State<MemberListPage> {
   Future<void> _openDetail(Member m) async {
     final changed = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
-        builder: (_) =>
-            MemberDetailPage(service: widget.service, memberId: m.id),
+        builder: (_) => MemberDetailPage(
+          service: widget.service,
+          memberId: m.id,
+          sync: widget.sync,
+        ),
       ),
     );
     if (changed ?? false) {

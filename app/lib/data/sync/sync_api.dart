@@ -12,14 +12,25 @@ import 'dart:io';
 
 import 'sync_protocol.dart';
 
-/// 一次请求的结果：状态码 + 已解析的 JSON。
+/// 一次请求的结果：状态码 + 已解析的 JSON（可选原始字节）。
 final class HttpResponseData {
-  const HttpResponseData({required this.statusCode, required this.json});
+  const HttpResponseData({
+    required this.statusCode,
+    required this.json,
+    this.rawBody,
+  });
 
   final int statusCode;
 
   /// body 解析成的 map；空 body 或不是对象时为 null。
   final Map<String, Object?>? json;
+
+  /// 原始 body 字节；调用方没要求时是 null。
+  ///
+  /// 只给 `/export` 用：那一份要原样落地成文件，重新 `jsonEncode` 一遍
+  /// 会改键顺序和数字格式。加上这个字段而不是给 transport 开一个新方法，
+  /// 是因为"要不要留原文"本来就是**调用方**的决定。
+  final List<int>? rawBody;
 
   @override
   String toString() => 'HttpResponseData($statusCode)';
@@ -47,7 +58,13 @@ abstract interface class SyncTransport {
     required String body,
   });
 
-  Future<HttpResponseData> get(Uri url, {Map<String, String> headers});
+  /// `keepRawBody`：把 body 原样留在 `rawBody` 里（`/export` 要落地成文件）。
+  /// 默认不留 —— 同步的响应都是几十 KB 的 JSON，留一份整串没意义。
+  Future<HttpResponseData> get(
+    Uri url, {
+    Map<String, String> headers,
+    bool keepRawBody,
+  });
 
   void close();
 }
@@ -80,15 +97,19 @@ final class HttpSyncTransport implements SyncTransport {
     Uri url, {
     required Map<String, String> headers,
     required String body,
-  }) => _send('POST', url, headers: headers, body: body);
+  }) => _send('POST', url, headers: headers, body: body, keepRawBody: false);
 
   @override
-  Future<HttpResponseData> get(Uri url, {Map<String, String> headers = const {}}) =>
-      _send('GET', url, headers: headers);
+  Future<HttpResponseData> get(
+    Uri url, {
+    Map<String, String> headers = const {},
+    bool keepRawBody = false,
+  }) => _send('GET', url, headers: headers, keepRawBody: keepRawBody);
 
   Future<HttpResponseData> _send(
     String method,
     Uri url, {
+    bool keepRawBody = false,
     required Map<String, String> headers,
     String? body,
   }) async {
@@ -127,7 +148,12 @@ final class HttpSyncTransport implements SyncTransport {
           parsed = null;
         }
       }
-      return HttpResponseData(statusCode: resp.statusCode, json: parsed);
+      return HttpResponseData(
+        statusCode: resp.statusCode,
+        json: parsed,
+        // 只有 `/export` 要：那一份要原样落地成文件。
+        rawBody: keepRawBody ? utf8.encode(text) : null,
+      );
     }
 
     try {
@@ -177,10 +203,7 @@ final class SyncApi {
   }) async {
     final resp = await _transport.post(
       _uri('/sync'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-      },
+      headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json'},
       body: request.encode(),
     );
     _throwOnError(resp, '/sync');
@@ -232,14 +255,74 @@ final class SyncApi {
     return PairClaimResult.fromJson(json);
   }
 
+  /// 给成员发一个打卡链接，返回完整 URL。
+  ///
+  /// **URL 里的 token 只在这里出现一次**：服务端存的是哈希，返回之后再想
+  /// 要同一个链接只能重新生成（会顶掉旧的）。所以调用方必须当场把它交给
+  /// 用户（复制/分享），**不能只存起来等下次显示** —— 存下来的那份和
+  /// 服务端的哈希对不上时没有任何办法验证，只会表现为"链接打不开"。
+  Future<MemberLinkResult> memberLink({
+    required String token,
+    required String memberId,
+  }) async {
+    final resp = await _transport.post(
+      _uri('/members/${Uri.encodeComponent(memberId)}/link'),
+      headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json'},
+      body: '{}',
+    );
+    _throwOnError(resp, '/members/link');
+    final json = resp.json;
+    if (json == null || json['url'] is! String) {
+      throw SyncFormatException('response', '服务端没返回链接');
+    }
+    return MemberLinkResult(
+      url: json['url']! as String,
+      issuedAtMs: (json['issuedAtMs'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  /// 作废成员的打卡链接。
+  Future<void> revokeMemberLink({
+    required String token,
+    required String memberId,
+  }) async {
+    final resp = await _transport.post(
+      _uri('/members/${Uri.encodeComponent(memberId)}/unlink'),
+      headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json'},
+      body: '{}',
+    );
+    _throwOnError(resp, '/members/unlink');
+  }
+
+  /// `GET /export`：把服务端那份数据取回成本地备份文件的字节。
+  ///
+  /// 返回的字节**就是** App 的备份 JSON（格式与 `BackupData.toJson` 一致），
+  /// 所以它可以直接走「选一份备份恢复」，也可以当普通备份存着。
+  ///
+  /// 这里拿的是**原始 body**，不走 `_transport.get` 那套 JSON 解析：
+  /// 1. 解析再 `jsonEncode` 会丢掉键的顺序、也可能改数字格式，
+  ///    "导出的文件和备份文件长得不一样"会让用户以为是两份不同的东西；
+  /// 2. 备份可能很大（几年记录），多一次 parse/stringify 是白花的。
+  Future<List<int>> exportBackupBytes({required String token}) async {
+    final resp = await _transport.get(
+      _uri('/export'),
+      headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json'},
+      // 不传这个，`rawBody` 恒为 null，下面直接抛"服务端返回了空备份"。
+      keepRawBody: true,
+    );
+    _throwOnError(resp, '/export');
+    final raw = resp.rawBody;
+    if (raw == null || raw.isEmpty) {
+      throw SyncFormatException('response', '服务端返回了空备份');
+    }
+    return raw;
+  }
+
   /// 轮换 token（其他设备全部失效）。
   Future<PairClaimResult> rotateToken({required String token}) async {
     final resp = await _transport.post(
       _uri('/pair/rotate'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-      },
+      headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json'},
       body: '{}',
     );
     _throwOnError(resp, '/pair/rotate');
@@ -272,6 +355,17 @@ final class SyncApi {
     }
     throw SyncHttpException(code, text);
   }
+}
+
+/// 这台设备还没配对。
+///
+/// **不继承 `SyncTransport` 的失败语义**：这不是"网络不通"，重试一百次
+/// 也不会变。界面的正确反应是引导去设置里配对，而不是显示一个"重试"按钮。
+final class SyncNotPairedException implements Exception {
+  const SyncNotPairedException();
+
+  @override
+  String toString() => 'SyncNotPairedException: 还没同步过，先配对';
 }
 
 /// 凭据失效。**不要重试**：重试只会把限流打满，用户还是得重新配对。

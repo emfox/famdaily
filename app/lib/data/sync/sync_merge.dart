@@ -76,7 +76,11 @@ MergeWinner mergeMember(domain.Member? local, MemberDto remote) {
 /// 这里**故意不比较规则 JSON 的内容**：`repeatJson`/`timeJson` 可能因为
 /// 字段顺序不同而字符串不同，但语义一样。按时间戳判定已经足够 ——
 /// 两台设备在同一毫秒改了同一个项目，取远端（可复现）就行。
-MergeWinner mergeTask(domain.Task? local, TaskDto remote, {required bool localDeleted}) {
+MergeWinner mergeTask(
+  domain.Task? local,
+  TaskDto remote, {
+  required bool localDeleted,
+}) {
   if (local == null) {
     return MergeWinner.remote;
   }
@@ -134,10 +138,7 @@ final class MergedCheckin {
 ///    晚的是后来补录的）。
 /// 3. 时刻完全相同时，`done` 胜过 `makeup`（准时率不能被一次补录拉下来）。
 /// 4. `note` 只在远端非空时覆盖；空字符串当"没写"，不当"清空"。
-MergedCheckin mergeCheckin(
-  domain.CheckinRecord? local,
-  CheckinDto remote,
-) {
+MergedCheckin mergeCheckin(domain.CheckinRecord? local, CheckinDto remote) {
   if (local == null) {
     return MergedCheckin(
       state: remote.state,
@@ -188,8 +189,7 @@ MergedCheckin mergeCheckin(
     doneAtMs: doneAtMs,
     // `dueAtMinuteOfDay` 是"改规则不影响历史"的凭据，不该被一次
     // 没有它的推送抹掉。所以取非空的那个。
-    dueAtMinuteOfDay:
-        remote.dueAtMinuteOfDay ?? local.dueAtMinuteOfDay,
+    dueAtMinuteOfDay: remote.dueAtMinuteOfDay ?? local.dueAtMinuteOfDay,
     note: (remote.note != null && remote.note!.isNotEmpty)
         ? remote.note
         : local.note,

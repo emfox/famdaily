@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:famdaily/data/backup/backup_data.dart';
@@ -5,6 +6,9 @@ import 'package:famdaily/data/backup/backup_io.dart';
 import 'package:famdaily/data/backup/backup_service.dart';
 import 'package:famdaily/data/db/app_database.dart';
 import 'package:famdaily/data/db/mappers.dart';
+import 'package:famdaily/data/sync/sync_api.dart';
+import 'package:famdaily/data/sync/sync_config.dart';
+import 'package:famdaily/data/sync/sync_service.dart';
 import 'package:famdaily/domain/model/course.dart' as domain;
 import 'package:famdaily/domain/model/local_time.dart' as domain;
 import 'package:famdaily/domain/model/member.dart' as domain;
@@ -50,7 +54,11 @@ Widget _wrap(Widget child) => MaterialApp(home: child);
 /// 直接 tap 找不到落点会静默打空（不报错、也不触发），所以先滚过去。
 Future<void> _tapExport(WidgetTester tester) async {
   final button = find.widgetWithText(FilledButton, '导出到文件');
-  await tester.scrollUntilVisible(button, 120, scrollable: find.byType(Scrollable).first);
+  await tester.scrollUntilVisible(
+    button,
+    120,
+    scrollable: find.byType(Scrollable).first,
+  );
   await tester.pumpAndSettle();
   await tester.tap(button);
   await tester.pumpAndSettle();
@@ -65,17 +73,19 @@ void main() {
     db = AppDatabase.forTesting(openTestConnection());
     gateway = FakeGateway();
     service = BackupService(db: db, gateway: gateway);
-    await db.into(db.members).insert(
-      Mappers.memberToCompanion(
-        const domain.Member(
-          id: 'm1',
-          name: '爷爷',
-          sortOrder: 0,
-          createdAtMs: _ts,
-          updatedAtMs: _ts,
-        ),
-      ),
-    );
+    await db
+        .into(db.members)
+        .insert(
+          Mappers.memberToCompanion(
+            const domain.Member(
+              id: 'm1',
+              name: '爷爷',
+              sortOrder: 0,
+              createdAtMs: _ts,
+              updatedAtMs: _ts,
+            ),
+          ),
+        );
   });
 
   tearDown(() async => db.close());
@@ -192,10 +202,7 @@ void main() {
     var rescheduled = 0;
     await tester.pumpWidget(
       _wrap(
-        BackupPage(
-          service: service,
-          reschedule: () async => rescheduled++,
-        ),
+        BackupPage(service: service, reschedule: () async => rescheduled++),
       ),
     );
     await tester.pumpAndSettle();
@@ -267,6 +274,158 @@ void main() {
     expect(find.textContaining('原来的数据没动'), findsOneWidget);
     expect((await db.listMembers()).single.name, '爷爷', reason: '整体回滚');
   });
+
+  group('从服务端导出', () {
+    /// 造一个只认 `/export` 的假 transport。
+    _FakeExportTransport makeTransport({
+      int status = 200,
+      String body = '{}',
+    }) => _FakeExportTransport(status: status, body: body);
+
+    SyncService makeSync(SyncTransport t) => SyncService(
+      db: db,
+      config: SyncConfigStore(db),
+      apiFactory: (baseUrl, transport) =>
+          SyncApi(transport: transport, baseUrl: baseUrl),
+      transportFactory: () => t,
+    );
+
+    Future<void> pair() async {
+      for (final (k, v) in [
+        (SyncKeys.baseUrl, 'http://sync.test'),
+        (SyncKeys.token, 'dev-token-123'),
+        (SyncKeys.deviceId, 'dev1'),
+        (SyncKeys.familyId, 'fam1'),
+      ]) {
+        await db.setSetting(k, v, nowMs: _ts);
+      }
+    }
+
+    /// 滚到那一行再点：这一页在测试视口里比屏幕长。
+    Future<void> tapRemote(WidgetTester tester) async {
+      final row = find.text('从服务端导出');
+      await tester.scrollUntilVisible(
+        row,
+        120,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(row);
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('没配对时那一块**完全不出现**（不先给希望再拒绝）', (tester) async {
+      final t = makeTransport();
+      await tester.pumpWidget(
+        _wrap(BackupPage(service: service, sync: makeSync(t))),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('从服务端导出'), findsNothing);
+      expect(t.calls, isEmpty);
+    });
+
+    testWidgets('配对后出现，点了就取回、写成 .json、弹分享', (tester) async {
+      await pair();
+      const payload = '{\n  "format_version": 1,\n  "members": []\n}';
+      final t = makeTransport(body: payload);
+      await tester.pumpWidget(
+        _wrap(BackupPage(service: service, sync: makeSync(t))),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('从服务端导出'), findsOneWidget);
+
+      await tapRemote(tester);
+
+      expect(t.calls, ['/export']);
+      expect(t.authHeaders.single, 'Bearer dev-token-123');
+      expect(t.keepRawBody, isTrue, reason: '要原样落地，不能解析再序列化');
+
+      final name = gateway.files.keys.single;
+      // 后缀必须是 .json 而不是 .zip：这份没有照片，叫 zip 会让人以为
+      // 解压出来该有照片。
+      expect(
+        name,
+        matches(RegExp(r'^famdaily-backup-\d{4}-\d{2}-\d{2}\.json$')),
+      );
+      // **字节要一模一样**，一个空格都不能变。解析再编码会改键顺序。
+      expect(
+        utf8.decode(gateway.files[name]!),
+        payload,
+        reason: '落地的必须就是服务端那份原文',
+      );
+      expect(gateway.shared, ['/tmp/$name']);
+      expect(t.closed, isTrue, reason: 'transport 必须被关掉');
+    });
+
+    testWidgets('取回来失败时说明白，不写文件也不分享', (tester) async {
+      await pair();
+      final t = makeTransport(status: 500, body: '{}');
+      await tester.pumpWidget(
+        _wrap(BackupPage(service: service, sync: makeSync(t))),
+      );
+      await tester.pumpAndSettle();
+      await tapRemote(tester);
+
+      expect(find.textContaining('取回来失败了'), findsOneWidget);
+      expect(gateway.files, isEmpty);
+      expect(gateway.shared, isEmpty);
+    });
+
+    testWidgets('凭据失效时提示重新配对', (tester) async {
+      await pair();
+      final t = makeTransport(status: 401, body: '{}');
+      await tester.pumpWidget(
+        _wrap(BackupPage(service: service, sync: makeSync(t))),
+      );
+      await tester.pumpAndSettle();
+      await tapRemote(tester);
+
+      expect(find.textContaining('凭据失效'), findsOneWidget);
+      expect(gateway.files, isEmpty);
+    });
+  });
+}
+
+/// 只认 `/export` 的假 transport。
+final class _FakeExportTransport implements SyncTransport {
+  _FakeExportTransport({required this.status, required this.body});
+
+  final int status;
+  final String body;
+
+  final List<String> calls = [];
+  final List<String?> authHeaders = [];
+  bool keepRawBody = false;
+  bool closed = false;
+
+  @override
+  Future<HttpResponseData> post(
+    Uri url, {
+    required Map<String, String> headers,
+    required String body,
+  }) async {
+    calls.add(url.path);
+    return const HttpResponseData(statusCode: 404, json: null);
+  }
+
+  @override
+  Future<HttpResponseData> get(
+    Uri url, {
+    Map<String, String> headers = const {},
+    bool keepRawBody = false,
+  }) async {
+    calls.add(url.path);
+    authHeaders.add(headers['Authorization']);
+    this.keepRawBody = keepRawBody;
+    return HttpResponseData(
+      statusCode: status,
+      json: null,
+      rawBody: keepRawBody ? utf8.encode(body) : null,
+    );
+  }
+
+  @override
+  void close() => closed = true;
 }
 
 final class _ThrowingGateway implements BackupFileGateway {

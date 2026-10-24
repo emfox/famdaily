@@ -214,8 +214,7 @@ final class SyncService {
   Future<SyncStatus> onForeground() async {
     final last = _lastSuccessAtMs ?? await _config.lastSuccessAtMs();
     _lastSuccessAtMs = last;
-    if (last != null &&
-        _nowMs() - last < _foregroundMinGap.inMilliseconds) {
+    if (last != null && _nowMs() - last < _foregroundMinGap.inMilliseconds) {
       return _status;
     }
     return syncNow(reason: 'foreground');
@@ -228,15 +227,85 @@ final class SyncService {
     return syncNow(reason: 'paired');
   }
 
+  /// 给成员发一个打卡链接。
+  ///
+  /// 和同步共用一个 `SyncApi`，因为**它用的是同一套设备凭据**：链接是
+  /// "这台已经配对的设备"替某个成员申请的。没配对时直接抛
+  /// [SyncNotPairedException]，让界面提示"先同步"而不是一个网络错误。
+  ///
+  /// 单独包一层（而不是让界面自己 new 一个 `SyncApi`）的三个理由：
+  /// 1. 界面拿不到 `token`（它在 `settings` 表里，不该散出去）；
+  /// 2. transport 的关闭时机要统一，多一处 new 就多一处泄漏；
+  /// 3. 测试能注入假 transport，不用起服务。
+  Future<MemberLinkResult> createMemberLink(String memberId) async {
+    final cfg = await _config.load();
+    if (cfg == null || !cfg.isComplete) {
+      throw const SyncNotPairedException();
+    }
+    final transport = _transportFactory();
+    final api = _apiFactory(Uri.parse(cfg.baseUrl), transport);
+    try {
+      return await api.memberLink(token: cfg.token, memberId: memberId);
+    } finally {
+      // 这里**必须** close：`HttpSyncTransport` 每次请求自己造
+      // `HttpClient`，不关就是一次链接生成泄漏一个连接池。
+      api.close();
+    }
+  }
+
+  /// 作废成员的打卡链接（关掉那个入口）。
+  Future<void> revokeMemberLink(String memberId) async {
+    final cfg = await _config.load();
+    if (cfg == null || !cfg.isComplete) {
+      throw const SyncNotPairedException();
+    }
+    final transport = _transportFactory();
+    final api = _apiFactory(Uri.parse(cfg.baseUrl), transport);
+    try {
+      await api.revokeMemberLink(token: cfg.token, memberId: memberId);
+    } finally {
+      api.close();
+    }
+  }
+
+  /// `GET /export`：把服务端那份数据取回成本地备份的字节。
+  ///
+  /// 返回的就是 App 的备份 JSON（字段与 `BackupData.toJson` 一致），
+  /// 所以既能直接存成文件，也能喂给「选一份备份恢复」。
+  ///
+  /// **和本机导出并列存在，不是替代**：本机导出能带照片，这一份永远不能
+  /// （照片从不上传）；但本机数据库坏了、换了手机、App 被删了重装，
+  /// 只有这一份取得回来。
+  Future<List<int>> exportBackupBytes() async {
+    final cfg = await _config.load();
+    if (cfg == null || !cfg.isComplete) {
+      throw const SyncNotPairedException();
+    }
+    final transport = _transportFactory();
+    final api = _apiFactory(Uri.parse(cfg.baseUrl), transport);
+    try {
+      return await api.exportBackupBytes(token: cfg.token);
+    } finally {
+      api.close();
+    }
+  }
+
+  /// 这台设备配没配对（有没有一份完整的同步配置）。
+  ///
+  /// **不用 `status.outcome`**：那是"上一次同步的结果"，冷启动时还没跑过，
+  /// 初始值是 `idle`，看起来和"配对过但还没同步"一模一样。想知道
+  /// "该不该显示云端功能"，必须问配置本身。
+  Future<bool> isPaired() async {
+    final cfg = await _config.load();
+    return cfg != null && cfg.isComplete;
+  }
+
   /// 清掉"不可重试"的失败状态（用户手动点「重试」时用）。
   void resetError() {
     _backoffIndex = 0;
     _backoffTimer?.cancel();
     _emit(
-      SyncStatus(
-        outcome: SyncOutcome.idle,
-        lastSuccessAtMs: _lastSuccessAtMs,
-      ),
+      SyncStatus(outcome: SyncOutcome.idle, lastSuccessAtMs: _lastSuccessAtMs),
     );
   }
 
@@ -368,8 +437,8 @@ final class SyncService {
       return;
     }
     _backoffTimer?.cancel();
-    final step = _backoffSteps[
-        _backoffIndex.clamp(0, _backoffSteps.length - 1)];
+    final step =
+        _backoffSteps[_backoffIndex.clamp(0, _backoffSteps.length - 1)];
     _backoffIndex = (_backoffIndex + 1).clamp(0, _backoffSteps.length - 1);
     _backoffTimer = Timer(step, () {
       if (_disposed) {
@@ -457,9 +526,9 @@ final class SyncService {
 
     for (final remote in response.tasks) {
       final local = await _db.findTask(remote.id);
-      final row = await (_db.select(_db.tasks)
-            ..where((t) => t.id.equals(remote.id)))
-          .getSingleOrNull();
+      final row = await (_db.select(
+        _db.tasks,
+      )..where((t) => t.id.equals(remote.id))).getSingleOrNull();
       final winner = mergeTask(
         local,
         remote,
@@ -511,10 +580,7 @@ final class SyncService {
         continue;
       }
       final localAt = await _db.settingUpdatedAt(remote.key);
-      if (!shouldTakeRemoteSetting(
-        localUpdatedAtMs: localAt,
-        remote: remote,
-      )) {
+      if (!shouldTakeRemoteSetting(localUpdatedAtMs: localAt, remote: remote)) {
         continue;
       }
       if (await _db.applyRemoteSetting(remote)) {

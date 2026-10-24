@@ -229,8 +229,7 @@ class _AvatarChoice extends StatelessWidget {
                 : Border.all(color: Colors.transparent, width: 2.5),
           ),
           alignment: Alignment.center,
-          child: child ??
-              Icon(icon, size: 28, color: fg),
+          child: child ?? Icon(icon, size: 28, color: fg),
         ),
       ),
     );

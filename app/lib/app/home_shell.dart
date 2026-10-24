@@ -150,14 +150,17 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   }
 
   Future<void> _openStats() async {
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute(builder: (_) => StatsPage(service: _stats)),
-    );
+    await Navigator.of(
+      context,
+    ).push<void>(MaterialPageRoute(builder: (_) => StatsPage(service: _stats)));
   }
 
   Future<void> _openMembers() async {
     await Navigator.of(context).push<bool>(
-      MaterialPageRoute(builder: (_) => MemberListPage(service: _members)),
+      MaterialPageRoute(
+        builder: (_) =>
+            MemberListPage(service: _members, sync: widget.services.sync),
+      ),
     );
     // 成员可能被增删改名，回来无条件刷一次：这个数字不刷就是错的。
     await _refreshMemberCount();

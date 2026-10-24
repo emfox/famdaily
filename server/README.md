@@ -43,6 +43,7 @@ FAMDAILY_PAIR_SECRET='自己定一个长口令' PORT=8787 node index.mjs
 | POST | `/sync` | Bearer | 推全量 + 拉增量，一个往返 |
 | POST | `/members/:id/link` | Bearer | 给成员发一个**网页打卡链接**，返回完整 URL（token 只在这里出现一次） |
 | POST | `/members/:id/unlink` | Bearer | 作废成员链接（连已发出去的 Cookie 一起废） |
+| GET | `/export` | Bearer | 导出全量数据，格式**与 App 备份一致**，可直接当备份文件恢复 |
 | GET | `/m/:token` | URL token | 成员页入口。换 ticket 写 Cookie，**302 到 `/m/`** 洗掉地址栏里的 token |
 | GET | `/m/api/today?date=` | 成员 Cookie | 只返回**这个成员自己**当天的打卡项 + 已完成状态 |
 | POST | `/m/api/checkin` | 成员 Cookie | 打卡 / 补卡 / 标记没做，可带备注 |

@@ -30,7 +30,11 @@ import '../../app/test_clock.dart';
 /// 首页的数据是"一屏快照"，每次操作后整体重读一次最省心也最不容易错。
 /// 复杂度留给真正需要细粒度刷新的地方（P2 的日历）。
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({required this.services, this.memberRevision = 0, super.key});
+  const HomeScreen({
+    required this.services,
+    this.memberRevision = 0,
+    super.key,
+  });
 
   final AppServices services;
 
@@ -315,7 +319,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
     await Navigator.of(context).push<bool>(
       MaterialPageRoute(
-        builder: (_) => MemberDetailPage(service: service, memberId: m.id),
+        builder: (_) => MemberDetailPage(
+          service: service,
+          memberId: m.id,
+          sync: widget.services.sync,
+        ),
       ),
     );
     if (mounted) {
@@ -424,6 +432,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
     await _afterChange();
   }
+
   /// 新建打卡项（ui-spec §2 三步式）。
   Future<void> _newTask() async {
     if (_members.isEmpty) {
@@ -474,11 +483,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final capability = await askPermissionOnce(
       gateway: widget.services.notifications,
       readFlag: (k) => db.getSetting(k),
-      writeFlag: (k) => db.setSetting(
-        k,
-        'true',
-        nowMs: appNow().millisecondsSinceEpoch,
-      ),
+      writeFlag: (k) =>
+          db.setSetting(k, 'true', nowMs: appNow().millisecondsSinceEpoch),
     );
     if (capability == null || !mounted) {
       return;

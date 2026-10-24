@@ -125,13 +125,10 @@ abstract final class MemberAvatars {
     ),
   ];
 
-  static final Map<String, AvatarOption> _byId = {
-    for (final a in all) a.id: a,
-  };
+  static final Map<String, AvatarOption> _byId = {for (final a in all) a.id: a};
 
   /// 按 id 找；未知 id 返回 null（调用方回落到"首字色块"）。
-  static AvatarOption? find(String? id) =>
-      id == null ? null : _byId[id];
+  static AvatarOption? find(String? id) => id == null ? null : _byId[id];
 
   /// 名字首字兜底用的 8 色板。与 `AvatarLibrary.colorIndexFor` 配套。
   static const List<Color> fallbackPalette = [
