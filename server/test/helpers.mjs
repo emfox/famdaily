@@ -27,11 +27,17 @@ export async function startServer({ pairSecret = 'test-secret' } = {}) {
   const call = async (method, path, { body, token, headers = {}, raw } = {}) => {
     const h = { ...headers };
     if (token) h.authorization = `Bearer ${token}`;
-    if (body !== undefined) h['content-type'] = 'application/json';
+    // `POST` 即使没有 body 也要显式发一个 '{}'：真机上 Node 对
+    // 无 body 的 POST 不会自动带 content-length: 0，服务端读到的是
+    // "连上了但不发数据"，请求会挂在那里直到超时。
+    const isPost = method === 'POST';
+    const payload =
+      raw !== undefined ? raw : body !== undefined ? JSON.stringify(body) : isPost ? '{}' : undefined;
+    if (payload !== undefined) h['content-type'] = 'application/json';
     const res = await fetch(`${base}${path}`, {
       method,
       headers: h,
-      body: raw !== undefined ? raw : body !== undefined ? JSON.stringify(body) : undefined,
+      body: payload,
     });
     const text = await res.text();
     let json = null;

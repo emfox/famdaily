@@ -246,7 +246,10 @@ export function handlePairClaim(ctx, deps) {
  * 用户点这个按钮时的心态是"我不能确定还有谁拿着它"，只加不减解决不了这个不安。
  */
 export function handlePairRotate(ctx, deps) {
-  const { db, device } = deps;
+  const { db } = deps;
+  // 设备身份由 index.mjs 的 `authed()` 解析后挂在 **ctx** 上。
+  // 这里曾经误从 `deps` 取，于是永远拿不到 → 每次轮换都 401。
+  const { device } = ctx;
   if (!device) {
     throw new HttpError(401, 'unauthorized', '需要先配对');
   }

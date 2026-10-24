@@ -87,16 +87,18 @@ export function createApp({
       sendJson(ctx.res, 200, handlePairClaim(ctx, deps));
     },
 
-    'POST /pair/rotate': authed((ctx) => {
-      sendJson(ctx.res, 200, handlePairRotate(ctx, deps));
-    }),
-
-    // 先解析请求体再鉴权：一个坏 JSON 无论带没带 token 都是坏 JSON，
-    // 报 401 会把"我把字段写错了"误导成"我配对丢了"。
+    // 先解析再鉴权：`/sync` / `rotate` 都是 Bearer 接口，客户端发的 JSON
+    // 有问题时要报 400 而不是 401 —— 401 会把"字段写错了"误导成"配对丢了"。
+    'POST /pair/rotate': async (ctx) => {
+      ctx.body = await readJson(ctx.req);
+      authed((c) => {
+        sendJson(c.res, 200, handlePairRotate(c, deps));
+      })(ctx);
+    },
     'POST /sync': async (ctx) => {
       ctx.body = await readJson(ctx.req);
-      await authed((ctx) => {
-        sendJson(ctx.res, 200, syncHandler(ctx));
+      authed((c) => {
+        sendJson(c.res, 200, syncHandler(c));
       })(ctx);
     },
   };
