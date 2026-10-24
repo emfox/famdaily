@@ -142,6 +142,51 @@ void main() {
       expect(added.member.initial, '小');
     });
 
+    testWidgets('新成员的 id 是标准 UUID，同一毫秒建两个也不撞', (tester) async {
+      // 以前 id 是 'm${nowMs}_${名字hashCode}'：同一毫秒、同名会撞，
+      // 而且这个格式跨设备同步时必然互相覆盖。
+      final uuidV4 = RegExp(
+        r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+      );
+
+      // 保存成功会 pop，所以从首页往里推——否则第一次保存就把根路由弹掉了。
+      await tester.pumpWidget(
+        _wrap(
+          Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<bool>(
+                    builder: (_) => MemberEditPage(service: service),
+                  ),
+                ),
+                child: const Text('去新建'),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      for (final name in ['同', '同']) {
+        await tester.tap(find.text('去新建'));
+        await tester.pumpAndSettle();
+        await tester.enterText(find.byType(TextField), name);
+        await tester.pumpAndSettle();
+        await tester.tap(find.widgetWithText(TextButton, '保存'));
+        await tester.pumpAndSettle();
+      }
+
+      final added = (await service.list())
+          .where((r) => r.member.name == '同')
+          .map((r) => r.member.id)
+          .toList();
+      expect(added, hasLength(2), reason: '两个同名成员都该落库，不能互相覆盖');
+      for (final id in added) {
+        expect(uuidV4.hasMatch(id), isTrue, reason: '不是 UUID v4：$id');
+      }
+      expect(added.toSet(), hasLength(2), reason: 'id 必须互不相同');
+    });
+
     testWidgets('取消不动数据', (tester) async {
       await tester.pumpWidget(_wrap(MemberEditPage(service: service)));
       await tester.pumpAndSettle();

@@ -249,16 +249,24 @@ class AppDatabase extends _$AppDatabase {
   /// 旧行保留原规则并标记到 `archiveRulesBefore` 为止，
   /// 新规则从 `effectiveFrom` 起生效。P1 先只更新当前行并把生效日设为今天，
   /// 真正的封存逻辑与"规则历史表"在 P2 做——这一版把生效日字段留出来。
+  /// [rulesEffectiveFrom] **省略**时保留库里原值；要清空必须显式传
+  /// `Value(null)`。
+  ///
+  /// 这里踩过一次：原先签名是 `LocalDate? rulesEffectiveFrom`，写库时
+  /// 无条件 `Value(rulesEffectiveFrom)`，于是**每次编辑项目都会把生效日
+  /// 清成 null**（调用方根本不传这个参数，也没人会传）。
+  /// 生效日现在是 `_effectiveFrom()` 的兜底依据，被清掉就等于
+  /// "改个名字，历史规则边界一起没了"。默认值必须是"不动"。
   Future<void> updateTask(
     domain.Task t, {
     required int nowMs,
-    LocalDate? rulesEffectiveFrom,
+    Value<LocalDate?> rulesEffectiveFrom = const Value.absent(),
   }) async {
     await transaction(() async {
       await (update(tasks)..where((x) => x.id.equals(t.id))).write(
         Mappers.taskToCompanion(t).copyWith(
           updatedAtMs: Value(nowMs),
-          rulesEffectiveFrom: Value(rulesEffectiveFrom),
+          rulesEffectiveFrom: rulesEffectiveFrom,
         ),
       );
       await _log('task', t.id, 'upsert', nowMs);

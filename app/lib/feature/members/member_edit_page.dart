@@ -4,6 +4,7 @@ import '../../domain/model/member.dart';
 import 'member_avatar.dart';
 import 'member_service.dart';
 import '../../app/test_clock.dart';
+import '../../app/uuid.dart';
 
 /// 新增 / 编辑成员（ui-spec §5.2）。
 ///
@@ -67,7 +68,10 @@ class _MemberEditPageState extends State<MemberEditPage> {
     } else {
       await service.create(
         Member(
-          id: 'm${nowMs}_${_name.text.hashCode.abs()}',
+          // id 必须是真 UUID。以前是 'm${nowMs}_${hashCode}'：同一毫秒内
+          // 建两个同名成员会撞 id，而且这个格式一旦跨设备同步就是灾难
+          // （两台手机在同一毫秒建人，一方的会被另一方静默覆盖）。
+          id: newId(),
           name: name,
           avatarId: _avatarId,
           sortOrder: 0,

@@ -9,6 +9,10 @@
     <!-- 重启后重排通知（否则手机重启，提醒就静默消失了）。 -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <uses-permission android:name="android.permission.VIBRATE"/>
+    <!-- 同步要联网。Flutter 的 debug 模板会在 debug/AndroidManifest.xml 里
+         自动加这条，所以**调试包一直能联网、release 包一直不能**——
+         这种"只在发布版出现、还不报错"的缺陷最难查。 -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <!-- 打卡凭证照片。**不申请 CAMERA 权限**：image_picker 走的是
          ACTION_IMAGE_CAPTURE Intent，由系统相机 App 拍照，我们只收结果。
          声明了 CAMERA 反而会让系统认为"你自己要拍照"，从而强制要走

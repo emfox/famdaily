@@ -776,7 +776,7 @@ NotificationPlanner.plan(expanded: upcoming, ...)
 
 ```bash
 cd app
-./tool/test.sh              # 单元 + 组件，532 条
+./tool/test.sh              # 单元 + 组件，562 条
 ./tool/integration_test.sh  # 端到端，5 条，Linux 桌面 + Xvfb
 ```
 

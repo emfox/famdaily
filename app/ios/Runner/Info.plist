@@ -17,6 +17,16 @@
 	<string>从相册里挑一张照片作为打卡凭证。照片只存在你自己的手机里。</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>把打卡照片存进相册。</string>
+	<!-- 同步服务跑在本地沙箱里，暴露出来的是 http（没有证书）。
+	     iOS 的 ATS 默认禁止明文 http，请求会直接失败且没有可读的错误。
+	     **只对本地网络放行，不写 NSAllowsArbitraryLoads**——那等于给
+	     整个 App 关掉传输安全，上架审核也会被问。
+	     正式域名将来上了 https，这段可以整块删掉。 -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<key>CFBundleDisplayName</key>
 	<string>Famdaily</string>
 	<key>CFBundleExecutable</key>

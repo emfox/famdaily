@@ -125,6 +125,49 @@ void main() {
   });
 
   group('项目', () {
+    /// 直接把生效日写进库里（模拟"这行早就有了，且生效日已确定"）。
+    Future<void> setEffectiveFrom(String taskId, domain.LocalDate d) =>
+        (db.update(db.tasks)..where((x) => x.id.equals(taskId))).write(
+          TasksCompanion(rulesEffectiveFrom: Value(d)),
+        );
+
+    Future<domain.LocalDate?> readEffectiveFrom(String taskId) async {
+      final row = await (db.select(
+        db.tasks,
+      )..where((x) => x.id.equals(taskId))).getSingle();
+      return row.rulesEffectiveFrom;
+    }
+
+    test('编辑不传生效日时，库里原有生效日保持不变', () async {
+      // 这里踩过坑：updateTask 原先无条件写 `Value(rulesEffectiveFrom)`，
+      // 而唯一的调用方 home_screen._saveTask 从不传这个参数 —— 也就是
+      // "改个项目名字，规则的生效日就被清成 null"。生效日是历史规则的
+      // 分界线，被清掉不会报错，只会让统计口径悄悄变掉。
+      final t = _task('t1');
+      await db.insertTask(t, nowMs: _now);
+      await setEffectiveFrom('t1', domain.LocalDate(2025, 3, 1));
+
+      await db.updateTask(t.copyWith(name: '吃药（改名）'), nowMs: _now + 1000);
+
+      final back = (await db.findTask('t1'))!;
+      expect(back.name, '吃药（改名）');
+      expect(await readEffectiveFrom('t1'), domain.LocalDate(2025, 3, 1));
+    });
+
+    test('显式传 Value(null) 才清空生效日', () async {
+      final t = _task('t1');
+      await db.insertTask(t, nowMs: _now);
+      await setEffectiveFrom('t1', domain.LocalDate(2025, 3, 1));
+
+      await db.updateTask(
+        t,
+        nowMs: _now + 1000,
+        rulesEffectiveFrom: const Value(null),
+      );
+
+      expect(await readEffectiveFrom('t1'), isNull);
+    });
+
     test('规则 JSON 往返无损', () async {
       final t = _task(
         't1',
