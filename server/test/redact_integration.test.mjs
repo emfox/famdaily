@@ -17,7 +17,7 @@ const TOKEN = 'AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_abc';
 test('访问日志里不出现明文成员 token（路径和查询都算）', async () => {
   const lines = [];
   const logger = { info: (s) => lines.push(s), error: () => {} };
-  const app = createApp({ dbPath: ':memory:', pairSecret: 'x', logger });
+  const app = await createApp({ dbPath: ':memory:', pairSecret: 'x', logger });
   await new Promise((r) => app.server.listen(0, '127.0.0.1', r));
   const { port } = app.server.address();
 
@@ -44,7 +44,7 @@ test('访问日志里不出现明文成员 token（路径和查询都算）', as
 test('正常接口的日志保持可读（脱敏不能把排障信息也吃掉）', async () => {
   const lines = [];
   const logger = { info: (s) => lines.push(s), error: () => {} };
-  const app = createApp({ dbPath: ':memory:', pairSecret: 'x', logger });
+  const app = await createApp({ dbPath: ':memory:', pairSecret: 'x', logger });
   await new Promise((r) => app.server.listen(0, '127.0.0.1', r));
   const { port } = app.server.address();
 

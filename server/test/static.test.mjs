@@ -21,6 +21,14 @@ import { safeRelativePath } from '../src/static.mjs';
 
 const FIXTURE_ROOT = new URL('./fixtures/public/', import.meta.url).pathname;
 
+/**
+ * 真实的静态产物目录（`server/public/`）。
+ *
+ * 少数用例必须用真目录：比如 `/rules/*` 的第二个根是按 publicDir 推出来的，
+ * 拿夹具根去测会算到一个不存在的位置，测出来的 404 是假的。
+ */
+const REAL_PUBLIC_ROOT = new URL('../public/', import.meta.url).pathname;
+
 /** 安静 logger。 */
 const silent = { info() {}, error() {} };
 
@@ -31,7 +39,7 @@ const silent = { info() {}, error() {} };
  * 问题是"路由和 fallback 的优先级装错了"，只有从真实装配入口起才测得出来。
  */
 async function start({ publicDir = FIXTURE_ROOT } = {}) {
-  const app = createApp({
+  const app = await createApp({
     dbPath: ':memory:',
     pairSecret: 'test-secret',
     publicDir,
@@ -526,13 +534,117 @@ describe('安全头与缓存', () => {
 });
 
 // ---------------------------------------------------------------------------
+// 路由 ↔ 静态层的"让路"
+// ---------------------------------------------------------------------------
+
+describe('路由给静态层让路（STATIC_PASSTHROUGH）', () => {
+  /**
+   * `/m/:token` 的正则是 `[^/]+`，`app.js` 完全符合"一段 token"的形状。
+   * 第一版就是这样：`/m/` 页面 200，但脚本和样式全 401 —— 表现是
+   * "白屏 + 一个空标题"，从现象根本想不到是路由冲突。
+   *
+   * 这一组把"名单里的资源名必须落到静态层"钉住。
+   */
+  test('/m/app.js、/m/app.css 不是 token，能取到（200 + 正确类型）', async () => {
+    const srv = await start();
+    for (const [path, type] of [
+      ['/m/app.js', /javascript/],
+      ['/m/app.css', /text\/css/],
+    ]) {
+      const r = await srv.get(path);
+      assert.equal(r.status, 200, `${path} 应该是 200，实际 ${r.status}`);
+      assert.match(r.headers.get('content-type'), type, `${path} 的 content-type 不对`);
+      assert.ok(r.body.length > 0, `${path} 不该是空文件`);
+    }
+    await srv.close();
+  });
+
+  test('/m/ 下的 HTML 入口也是静态文件', async () => {
+    const srv = await start();
+    const r = await srv.get('/m/');
+    assert.equal(r.status, 200);
+    assert.match(r.headers.get('content-type'), /text\/html/);
+    await srv.close();
+  });
+
+  test('让路之后仍然是"没有就 404"，不能变成 200 空壳', async () => {
+    // `/m/favicon.ico` 在名单里但文件不存在。如果让路后不把
+    // 'not_found' 翻译成异常，就会出现"200 + 空 body"—— 浏览器会把
+    // 空响应当成坏图标，而排查时看到 200 会一直怀疑是不是缓存问题。
+    const srv = await start();
+    const r = await srv.get('/m/favicon.ico');
+    assert.equal(r.status, 404);
+    await srv.close();
+  });
+
+  test('真正的 token 仍然走入口（没被让路顺手放过）', async () => {
+    // 反过来的误伤：名单加了之后，如果判断写成"前缀匹配"或"含点就算资源"，
+    // 所有 token 都会被当成文件 → 全部 404，用户点链接进不来。
+    const srv = await start();
+    const r = await srv.get('/m/abcdefghijklmnopqrstuvwxyz');
+    assert.equal(r.status, 401);
+    assert.equal(JSON.parse(r.body).error.code, 'no_identity');
+    await srv.close();
+  });
+
+  test('让路的判定只认名单，不认"带扩展名"', async () => {
+    // **写成"结尾是 .js/.css 就让路"也能过前几条**，但会误伤真实 token。
+    // 成员链接 token 是 base64url 随机串，**完全可能以 `x.png` 这类形状结尾**
+    // （`/m/QWERTY...x.png`），这时页面会去静态层找文件、拿到 404，
+    // 而用户看到的又是"链接失效"——和真的失效长得一样，排查时根本不会怀疑路由。
+    //
+    // 下面四个探测值都是**名单外**的，必须继续被当作 token。
+    // 关键是后两个：token 是 base64url 随机串，**完全可能以 `.js` / `.css`
+    // 结尾**（`…Zm9v.js`），这时"看扩展名就让路"的写法会把真链接送去
+    // 静态层找文件 → 404，和"链接已作废"长得一模一样，排查时根本不会
+    // 怀疑到路由头上。前两个则是把判定写成"包含点"就会踩的。
+    const srv = await start();
+    for (const path of [
+      '/m/app.js.bak',
+      '/m/x.png',
+      '/m/dGhpcy1pcy1hLXRva2Vu.js',
+      '/m/dGhpcy1pcy1hLXRva2Vu.css',
+    ]) {
+      const r = await srv.get(path);
+      assert.equal(r.status, 401, `${path} 应该仍被当作 token，实际 ${r.status}`);
+    }
+    await srv.close();
+  });
+
+  test('让路后仍然守目录穿越（多根没有多开一扇门）', async () => {
+    const srv = await start();
+    for (const path of ['/rules/../../server/index.mjs', '/rules/../package.json']) {
+      const r = await srv.get(path);
+      assert.equal(r.status, 404, `${path} 不该能读到`);
+    }
+    await srv.close();
+  });
+
+  test('/rules/* 映射到仓库 web/rules，且只能取白名单类型', async () => {
+    // ⚠️ 这里**不能用 start() 默认的夹具根**。
+    // 第二个根是按 `publicDir/../../web/rules` 算出来的：夹具根算出来是
+    // `test/fixtures/web/rules`（不存在），于是所有 /rules/* 都是 404 ——
+    // 而 404 恰好也是这条用例后半段期望的结果，很容易被误读成"守卫生效了"。
+    // 所以前半段用真实的 public 目录起，确认它**确实能取到**。
+    const srv = await start({ publicDir: REAL_PUBLIC_ROOT });
+    const ok = await srv.get('/rules/member_view.mjs');
+    assert.equal(ok.status, 200, '/rules/member_view.mjs 应该能取到（这是页面真正依赖的模块）');
+    assert.match(ok.headers.get('content-type'), /javascript/);
+    // web/rules 目录里根本没有 .db；这条是防"第二个根被放宽了白名单"。
+    const bad = await srv.get('/rules/x.db');
+    assert.equal(bad.status, 404);
+    await srv.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 访问日志
 // ---------------------------------------------------------------------------
 
 describe('访问日志', () => {
   test('静态请求也会打日志（能看出有人打开了页面）', async () => {
     const lines = [];
-    const app = createApp({
+    const app = await createApp({
       dbPath: ':memory:',
       pairSecret: 'test-secret',
       publicDir: FIXTURE_ROOT,

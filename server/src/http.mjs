@@ -13,6 +13,22 @@ import { redactRequest } from './redact.mjs';
 /** 请求体上限。全量推送在家庭规模下约 150KB，8MB 是有余量的兜底。 */
 export const MAX_BODY_BYTES = 8 * 1024 * 1024;
 
+/**
+ * "这条路由不处理，交给兜底 handler" —— 哨兵值。
+ *
+ * 路由 handler 平时返回 `undefined`（表示"我已经把响应发完了"）。
+ * 想表达"我没处理，请继续往下找"需要一个**不同的**返回值，
+ * 否则 http 层没法区分"处理完了"和"没处理"。
+ *
+ * 唯一用到它的场景：`/m/:token` 会长得像 token 的静态资源名（`app.js`）
+ * 一起吃进去，那里返这个符号，让请求落到静态层。
+ *
+ * 定义在这里而不是 `index.mjs`：它要被 `http.mjs` 判断，也要被
+ * `index.mjs` 返回。定义在大脑层、两边 import，比反过来制造
+ * `index.mjs → http.mjs → index.mjs` 的循环依赖干净。
+ */
+export const STATIC_PASSTHROUGH = Symbol('static-passthrough');
+
 /** 业务错误。带 HTTP 状态码和机器可读的 `code`，客户端按 code 分类处理。 */
 export class HttpError extends Error {
   constructor(status, code, message, extra = {}) {
@@ -145,6 +161,25 @@ function sendHtml404(res) {
 }
 
 /**
+ * 跑兜底 handler，并把它的结论**翻译成异常**。
+ *
+ * ⚠️ 这段逻辑曾经写在请求处理器的 `if` 里面直接 `return`。那个 `return`
+ * return 出的是**整个请求处理器**，于是下面 catch 里的
+ * `err instanceof HttpError` 分支再也不会为静态请求执行 ——
+ * 静态层原文发出的 404 文案成了唯一出口，`sendHtml404` 变成死代码，
+ * 而"未注册路径返回 JSON 404"的测试照样是绿的（它等的是另一条 throw）。
+ *
+ * 抽成函数之后，"静态层说没有"始终通过 `throw` 汇入同一个错误出口：
+ * 静态层只负责**判断是什么**，怎么写响应由 catch 里那一个地方决定。
+ */
+async function runFallback(fallback, ctx) {
+  const outcome = await fallback(ctx);
+  if (outcome === 'not_found') {
+    throw new HttpError(404, 'not_found', '没有这个页面');
+  }
+}
+
+/**
  * 建服务。
  *
  * [routes] 是 `{ 'METHOD /path/pattern': handler }`；路径里 `:name` 段会被
@@ -206,28 +241,27 @@ export function createHttpServer({ routes, fallback = null, logger = console }) 
         // 但注意：`/sync` 之类**显式注册过**的路径由 `pathExists` 挡在外面，
         // 它们仍然得到 405，不会被静态层吃掉。
         if (fallback && !pathExists && (req.method === 'GET' || req.method === 'HEAD')) {
-          // ⚠️ 这个 `return` 会 return 出**外层的 async 箭头函数**（也就是整个请求
-          // 处理器），finally 照样会跑，但下面 catch 里的 `err instanceof HttpError`
-          // 分支就再也不会为静态请求执行了。
-          //
-          // 结果：静态层的 404/401 文案原样发出去了，**可浏览器打错地址时
-          // 仍然只能看到一屏 "没有这个文件" 的纯文本**，`sendHtml404` 变成了
-          // 一段永远不会被走到的死代码 —— 而"未注册路径返回 JSON 404"的测试
-          // 却是绿的（那条测试等的是前面的 `throw new HttpError(404)`）。
-          //
-          // 正确做法是把结果**带回来**，交给统一的错误出口处理：
-          // 静态层只负责"是什么"，怎么写响应由 catch 里那一个地方决定。
-          const outcome = await fallback({ req, res, params: {}, url });
-          if (outcome === 'not_found') {
-            throw new HttpError(404, 'not_found', '没有这个页面');
-          }
+          await runFallback(fallback, { req, res, params: {}, url });
           return;
         }
         throw pathExists
           ? new HttpError(405, 'method_not_allowed', '方法不对')
           : new HttpError(404, 'not_found', '没有这个接口');
       }
-      await matched.handler({ req, res, params, url });
+      const out = await matched.handler({ req, res, params, url });
+      // 路由 handler 主动让路（`/m/app.js` 这类"路径像 token、实际是文件"）。
+      //
+      // ⚠️ 这里**不看 `pathExists`**：`/m/app.js` 确实匹配了 `/m/:token`
+      // 这条路由，但那只是正则层面的巧合，不代表有人想实现这个路径。
+      // 让路是一次显式的投票，不再按"是否匹配过"猜意图。
+      //
+      // `POST /m/app.js` 不会被让路到这里：静态层只认 GET/HEAD，
+      // 而下面这行允许让路后拿到的是 404 而不是 405 —— 那也对，
+      // 静态资源本来就没有"方法不对"这回事。
+      if (out === STATIC_PASSTHROUGH && fallback) {
+        await runFallback(fallback, { req, res, params: {}, url });
+        return;
+      }
     } catch (err) {
       if (err instanceof HttpError) {
         // 404 且请求方是浏览器（Accept 带 text/html、方法不是 POST）时，

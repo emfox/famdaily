@@ -19,7 +19,7 @@ const silent = { info() {}, error() {} };
  * - `call(method, path, { body, token, headers })` → `{ status, json }`
  */
 export async function startServer({ pairSecret = 'test-secret' } = {}) {
-  const app = createApp({ dbPath: ':memory:', pairSecret, logger: silent });
+  const app = await createApp({ dbPath: ':memory:', pairSecret, logger: silent });
   await new Promise((resolve) => app.server.listen(0, '127.0.0.1', resolve));
   const { port } = app.server.address();
   const base = `http://127.0.0.1:${port}`;

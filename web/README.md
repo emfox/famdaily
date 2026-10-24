@@ -2,8 +2,8 @@
 
 Famdaily 的成员打卡页（浏览器里打开，给不会用 App 的家人）。
 
-> **现状**：只有规则引擎（`rules/`）+ 测试。页面、鉴权、接口都还没写。
-> 这个 README 先记录"规则引擎为什么存在、为什么是第二份实现"。
+> **现状**：规则引擎 + 成员打卡页的逻辑层（渲染、重试、状态）都已落地并有测试；
+> 页面本身在 `server/public/m/`，由服务端同源托管。
 
 ## 为什么这里有一份规则引擎的复印件
 
@@ -47,8 +47,37 @@ cd app && ./tool/test.sh test/domain/slots_fixture_test.dart   # 47 条，跑同
 | `rules/edit_window.mjs` | `model/checkin.dart` 的 `EditWindow` | 30 天补卡窗口 |
 | `rules/task_spec.mjs` | 无（App 里无需这层） | `tasks` 裸行 → `ScheduleSpec` |
 | `rules/today.mjs` | 无（App 里是 DB 查询） | 读模型：某成员某天的待办清单 |
+| `rules/member_view.mjs` | 无 | **打卡页的渲染函数**：数据进、HTML 片段出，纯字符串，可测 |
+| `rules/member_state.mjs` | 无 | **打卡页的状态与重试**：退避、错误分类、乐观合并，纯函数 |
 
-## 移植时踩到的三个坑（每个都有对应测试）
+## 打卡页（`server/public/m/`）
+
+页面的**逻辑**放在本目录（`rules/member_view.mjs`、`rules/member_state.mjs`），
+**只负责接线**的三个文件放在服务端的静态产物目录：
+
+| 文件 | 内容 |
+|---|---|
+| `server/public/m/index.html` | 骨架 + 首屏"正在打开…" + `<dialog>` 备注弹层 |
+| `server/public/m/app.css` | 字号（基准 18px、任务名 22px）、56×56 点击区、深色模式 |
+| `server/public/m/app.js` | 拉数据、点勾、备注、重试、跨零点刷新 |
+
+**为什么不放进 `web/`**：静态托管的根是 `server/public/`，而 `web/rules/` 是第二个根
+（按 `/rules/*` 取）。三个页面文件跟产物走，两个逻辑模块跟源码走 ——
+两边都不必为了对方挪位置，也不需要"构建时拷贝"这一步（拷贝出来的那份必然分叉）。
+
+**逻辑为什么拆出来**：`app.js` 里能做的只有接线，判断全在可测的纯函数里。
+
+```bash
+cd web && npm test     # 157 条：76 规则引擎 + 46 渲染 + 35 状态/重试
+```
+
+| 拆出来的部分 | 放在纯函数里的理由 |
+|---|---|
+| HTML 拼装 | 转义只有一个入口；`node --test` 能直接断言，不需要 jsdom |
+| 退避与"要不要重试" | 401 该不该重试，写错了用户会盯着转圈十分钟 |
+| 错误 → 人话 | "文案里不能出现 401"可以直接断言 |
+
+## 移植时踩到的坑（每个都有对应测试）
 
 | 坑 | 正确写法 | 写错的症状 |
 |---|---|---|

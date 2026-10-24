@@ -1,0 +1,478 @@
+/*
+ * 成员打卡页样式。
+ *
+ * 三条硬要求，都来自"这个页面是给七八十岁的人用的"：
+ *
+ * 1. **字大**。基准 18px，比常见的 16px 大一档；打卡项的名字用 22px。
+ *    不靠用户去调系统字号 —— 很多老人根本不知道有这个设置。
+ * 2. **点击区域大**。每个可点的地方至少 56×56，不是 32。
+ *    手抖、老花、戴手套按不准，尺寸是唯一可靠的补偿。
+ * 3. **对比度高**。正文和背景的对比度按 WCAG AA 的 4.5:1 做，
+ *    深色模式同样满足。灰字只用在"已完成"这种可以忽略的地方。
+ *
+ * 不用 rem：这个页面只在浏览器里跑，不跟随任何"根字号"策略，
+ * 用 px 反而不会被用户系统里的奇怪设置缩坏。
+ */
+
+:root {
+  --bg: #faf9f6;
+  --card: #ffffff;
+  --text: #2c2a26;
+  --text-soft: #6b665e;
+  --line: #e6e2da;
+  --brand: #3f6b52;
+  --brand-ink: #ffffff;
+  --done: #3f6b52;
+  --done-bg: #e9f1ec;
+  --skipped-bg: #f2f0ea;
+  --warn-bg: #fdf3e2;
+  --warn-ink: #7a5a1e;
+  --shadow: 0 1px 2px rgba(44, 42, 38, 0.06), 0 4px 12px rgba(44, 42, 38, 0.04);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1c1b19;
+    --card: #262421;
+    --text: #ece9e3;
+    --text-soft: #a8a29a;
+    --line: #3a3733;
+    --brand: #6fa383;
+    --brand-ink: #10201a;
+    --done: #8fbfa3;
+    --done-bg: #23332b;
+    --skipped-bg: #302d29;
+    --warn-bg: #3a2f1c;
+    --warn-ink: #e8c78a;
+    --shadow: none;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+body {
+  font: 18px/1.6 system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB",
+        "Microsoft YaHei", sans-serif;
+  /* 刘海屏 / 底部手势条 */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right)
+           env(safe-area-inset-bottom) env(safe-area-inset-left);
+  -webkit-text-size-adjust: 100%;
+}
+
+#app {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 1.25rem 1rem 4rem;
+}
+
+/* ---------- 首屏 ---------- */
+
+.boot {
+  padding: 4rem 0;
+  text-align: center;
+  color: var(--text-soft);
+}
+
+/* ---------- 页头 ---------- */
+
+.head {
+  margin-bottom: 1.25rem;
+}
+
+.head__who {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  /* 长名字不换行、不溢出：宁可缩小也不折成两行把页面顶下去 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.head__day {
+  margin: 0.15rem 0 0;
+  font-size: 18px;
+  color: var(--text-soft);
+}
+
+.head__sum {
+  margin: 0.6rem 0 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--brand);
+}
+
+/* ---------- 提示条 ---------- */
+
+.notice {
+  margin: 0 0 1rem;
+  padding: 0.85rem 1rem;
+  border-radius: 12px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  color: var(--text-soft);
+  font-size: 17px;
+}
+
+.notice--warn {
+  background: var(--warn-bg);
+  border-color: transparent;
+  color: var(--warn-ink);
+}
+
+.notice--error {
+  background: var(--warn-bg);
+  border-color: transparent;
+  color: var(--warn-ink);
+}
+
+.notice__title {
+  display: block;
+  font-size: 19px;
+  font-weight: 700;
+  margin-bottom: 0.15rem;
+}
+
+/*
+ * 飘一句解释性的话（比如"已经记上了，改备注可以补充"）。
+ *
+ * 和 `.notice` 分开，因为两者语义不同：`.notice` 是"页面上正在发生的事"，
+ * 应该留在那儿；`.flash` 是"刚才那一下的结果"，说完就可以走了。
+ * 用 `position: sticky` 贴底而不是插在文档流里 —— 插进流里会让列表整体
+ * 往下挪一截，用户的下一眼就找不到刚才那条了。
+ */
+.flash {
+  position: sticky;
+  bottom: 0.5rem;
+  margin: 1rem 0 0;
+  padding: 0.85rem 1rem;
+  border-radius: 12px;
+  background: var(--brand);
+  color: var(--brand-ink);
+  font-size: 17px;
+  line-height: 1.45;
+  box-shadow: var(--shadow);
+}
+
+/* ---------- 列表 ---------- */
+
+.items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.item {
+  display: flex;
+  gap: 0.85rem;
+  padding: 1rem;
+  border-radius: 16px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.item--done {
+  background: var(--done-bg);
+  border-color: transparent;
+}
+
+.item--skipped {
+  background: var(--skipped-bg);
+  border-color: transparent;
+}
+
+.item--locked {
+  opacity: 0.72;
+}
+
+/* 勾选按钮：56×56 是最小点击区，圆角走 50% 更像"勾选框" */
+.item__check {
+  flex: 0 0 auto;
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  border-radius: 50%;
+  /*
+   * 未打卡态：**虚线边框**，不是实线。
+   *
+   * 第一版是实线空圈，截图出来三个纯白圆 —— 看着像"这三件事都做完了但勾没显示"，
+   * 或者干脆像装饰。虚线在全世界的界面语汇里都是"这里还空着、等你填"，
+   * 而且老年人对虚线框中"要写点东西"这个隐喻非常熟悉（表格、待办便签）。
+   */
+  border: 2.5px dashed var(--brand);
+  background: transparent;
+  color: transparent;
+  font-size: 30px;
+  line-height: 1;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  /* 手指按下去要有反馈，不然老人会以为没点上，然后连点五次 */
+  transition: transform 0.1s ease, background-color 0.15s ease, border-color 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/*
+ * 未打卡时圈里放一个**很淡的勾影**。
+ *
+ * 纯空的圈是在说"这里有个圈"，淡勾是在说"**在这里点一下就是打勾**"。
+ * 用 `::before` 而不是往 HTML 里塞字符：这个影子不是内容，读屏不该念它
+ * （HTML 那边已经 `aria-hidden="true"`，但少一处 DOM 更干净）。
+ */
+.item--todo .item__check::before {
+  content: '✓';
+  color: var(--brand);
+  opacity: 0.22;
+  font-size: 26px;
+}
+
+/* 已锁（过期未打卡）：连"点这里"的暗示都不该给 —— 这里点不了 */
+.item--locked .item__check::before {
+  content: '';
+}
+
+.item__check:active:not(:disabled) {
+  transform: scale(0.92);
+}
+
+.item--done .item__check {
+  background: var(--done);
+  border-color: var(--done);
+  border-style: solid;
+  color: var(--brand-ink);
+}
+
+.item--skipped .item__check {
+  border-color: var(--text-soft);
+  color: var(--text-soft);
+}
+
+.item__check:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.item__check:focus-visible {
+  outline: 3px solid var(--brand);
+  outline-offset: 3px;
+}
+
+.item__body {
+  flex: 1 1 auto;
+  min-width: 0; /* 没有这行，长名字会把整个 flex 撑破 */
+}
+
+.item__head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.item__time {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--brand);
+}
+
+.item__name {
+  font-size: 22px;
+  font-weight: 600;
+  /* 任务名允许两行，再多就省略 —— 不能让一条任务占满一屏 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+.item--done .item__name {
+  /* 已完成的不划掉：划掉会让"今天做完了"看起来像"这条被取消了" */
+  color: var(--text-soft);
+}
+
+.item__hint,
+.item__note {
+  margin: 0.35rem 0 0;
+  font-size: 17px;
+  color: var(--text-soft);
+  word-break: break-word;
+  white-space: pre-wrap; /* 备注里的换行要保留，但不能当 HTML 解析 */
+}
+
+.item__note {
+  color: var(--text);
+}
+
+.item__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.item__state {
+  font-size: 16px;
+  color: var(--text-soft);
+}
+
+.item__link {
+  min-height: 44px;
+  padding: 0 0.25rem;
+  border: 0;
+  background: none;
+  color: var(--brand);
+  font-size: 17px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.item__link:disabled {
+  color: var(--text-soft);
+  cursor: default;
+}
+
+/* ---------- 空状态 ---------- */
+
+.empty {
+  padding: 3rem 1rem;
+  text-align: center;
+  font-size: 20px;
+  color: var(--text-soft);
+}
+
+/* ---------- 按钮 ---------- */
+
+.btn {
+  min-height: 56px;
+  padding: 0 1.5rem;
+  border-radius: 14px;
+  border: 0;
+  font-size: 19px;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.btn--primary {
+  background: var(--brand);
+  color: var(--brand-ink);
+}
+
+.btn--ghost {
+  background: transparent;
+  color: var(--text-soft);
+  border: 1px solid var(--line);
+}
+
+.btn:active {
+  transform: scale(0.98);
+}
+
+.btn:focus-visible {
+  outline: 3px solid var(--brand);
+  outline-offset: 3px;
+}
+
+.actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 1rem;
+  flex-wrap: wrap;
+}
+
+/* ---------- 备注弹层 ---------- */
+
+.sheet {
+  border: 0;
+  border-radius: 20px;
+  padding: 0;
+  width: min(32rem, calc(100vw - 2rem));
+  background: var(--card);
+  color: var(--text);
+}
+
+.sheet::backdrop {
+  background: rgba(20, 18, 16, 0.45);
+}
+
+.sheet__inner {
+  padding: 1.25rem;
+}
+
+.sheet__title {
+  margin: 0 0 0.5rem;
+  font-size: 21px;
+}
+
+.sheet__label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-size: 17px;
+  color: var(--text-soft);
+}
+
+.sheet__input {
+  width: 100%;
+  padding: 0.85rem;
+  border-radius: 12px;
+  border: 1.5px solid var(--line);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  resize: vertical;
+}
+
+.sheet__input:focus-visible {
+  outline: 3px solid var(--brand);
+  outline-offset: 1px;
+}
+
+.sheet__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+/* ---------- 顶部的"正在提交"细条 ---------- */
+
+.bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 3px;
+  background: var(--brand);
+  transform-origin: 0 50%;
+  animation: bar 1.1s ease-in-out infinite;
+}
+
+@keyframes bar {
+  0% { transform: scaleX(0); opacity: 1; }
+  50% { transform: scaleX(0.7); opacity: 1; }
+  100% { transform: scaleX(1); opacity: 0.2; }
+}
+
+/* 系统开了"减少动态效果"就别动 */
+@media (prefers-reduced-motion: reduce) {
+  .bar { animation: none; transform: scaleX(1); opacity: 0.6; }
+  * { transition: none !important; }
+}

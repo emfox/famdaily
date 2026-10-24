@@ -148,8 +148,18 @@ export function safeRelativePath(pathname) {
  * 先 `realpath`（跟着软链走到底），再和 root 的真实路径做前缀比对。
  * 只比字符串的话，`public/leak.html` 指向 `../famdaily.db` 完全拦不住。
  */
-async function resolveFile(rootAbs, rootReal, rel) {
-  const target = join(rootAbs, rel);
+async function resolveFile(rootAbs, rootsReal, rel) {
+  // 依次试每个根：前一个根里没有，就看下一个。
+  for (let i = 0; i < rootAbs.length; i += 1) {
+    if (rootsReal[i] === null) continue;
+    const hit = await resolveOne(rootAbs[i], rootsReal[i], rel);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+async function resolveOne(root, rootReal, rel) {
+  const target = join(root, rel);
 
   let real;
   try {
@@ -182,28 +192,34 @@ function isRootPath(pathname) {
  * 造一个静态文件 handler。
  *
  * @param {object} opts
- * @param {string} opts.root `public/` 的绝对路径
+ * @param {string|string[]} opts.root 允许对外发文件的根（一个或多个绝对路径）
  * @param {(rel: string) => boolean} [opts.shouldHide] 额外屏蔽规则（返回 true 则当不存在）
  */
-export function createStaticHandler({ root, shouldHide = () => false }) {
-  const rootAbs = resolve(root);
-  // realpath 只在启动时算一次。public/ 是我们自己的构建产物，运行期不会换位置。
-  let rootReal = null;
-  const rootRealReady = realpath(rootAbs)
-    .then((p) => {
-      rootReal = p;
-    })
-    .catch(() => {
-      // 目录不存在不算致命错误：服务照样能跑，只是所有静态请求 404。
-      // 起服务时 `index.mjs` 会打一行警告。
-      rootReal = null;
-    });
+export async function createStaticHandler({ root, shouldHide = () => false }) {
+  // ⚠️ **允许的根不止一个**。
+  //
+  // 网页端分两半：页面在 `server/public/`，规则模块在 `web/rules/`（那里能
+  // 直接 `node --test`，不用构建）。如果只认 public 一个根，就得把 rules
+  // 复制一份进来 —— 复制出来的那份一定会和源头分叉，而分叉的表现是
+  // "网页算出来的槽位和服务器不一致"，最难查。
+  //
+  // 所以 `root` 可以是数组。每一层都用自己的 rootReal 做前缀比对，
+  // 软链和穿越的防护一点没放松：文件必须落在**某一个**根的**真实路径**下。
+  const rootList = (Array.isArray(root) ? root : [root]).map((r) => resolve(r));
+  const rootsReal = await Promise.all(
+    rootList.map((abs) =>
+      realpath(abs).catch(() => {
+        // 目录不存在不算致命错误：服务照样能跑，只是那些请求 404。
+        // 起服务时 `index.mjs` 会打一行警告。
+        return null;
+      }),
+    ),
+  );
 
   return async function serveStatic(ctx) {
-    await rootRealReady;
     const { res } = ctx;
 
-    if (rootReal === null) {
+    if (rootsReal.every((r) => r === null)) {
       // 交回给 http 层统一出错误响应，不自己拼一段纯文本 ——
       // 浏览器打开时该看到的是能读的页面，不是一行 "静态目录不存在"。
       return 'not_found';
@@ -232,7 +248,7 @@ export function createStaticHandler({ root, shouldHide = () => false }) {
     for (const candidate of candidates) {
       if (candidate === '' || candidate.endsWith('/')) continue;
       // eslint-disable-next-line no-await-in-loop -- 最多两个候选，顺序有意义
-      const hit = await resolveFile(rootAbs, rootReal, candidate);
+      const hit = await resolveFile(rootList, rootsReal, candidate);
       if (hit) {
         picked = hit;
         break;

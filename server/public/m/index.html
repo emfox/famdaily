@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#faf9f6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1c1b19" media="(prefers-color-scheme: dark)">
+<meta name="format-detection" content="telephone=no">
+<meta name="robots" content="noindex,nofollow">
+<title>今天要打卡</title>
+<link rel="stylesheet" href="/m/app.css">
+</head>
+<body>
+
+<main id="app" aria-live="polite">
+  <!-- 首屏：JS 还没跑起来时看到的东西。不能是空白页 ——
+       网慢的时候老人会以为"点坏了"然后反复点。 -->
+  <div class="boot">
+    <p class="boot__text">正在打开…</p>
+  </div>
+</main>
+
+<!-- 备注输入：原生 <dialog>，不用自己糊一个遮罩 -->
+<dialog id="noteDialog" class="sheet">
+  <form method="dialog" class="sheet__inner">
+    <h2 class="sheet__title">这一项的备注</h2>
+    <label class="sheet__label" for="noteInput">写一句就行（最多 200 字）</label>
+    <textarea id="noteInput" class="sheet__input" maxlength="200" rows="3"
+              placeholder="比如：水温 40 度，喝完了"></textarea>
+    <div class="sheet__actions">
+      <button class="btn btn--ghost" value="cancel" type="submit">算了</button>
+      <button class="btn btn--primary" value="save" type="submit" id="noteSave">存下</button>
+    </div>
+  </form>
+</dialog>
+
+<noscript>
+  <p class="notice notice--warn">这个页面要用浏览器里的 JavaScript 才能打卡，请让家里人帮忙看一下设置。</p>
+</noscript>
+
+<script type="module" src="/m/app.js"></script>
+</body>
+</html>
