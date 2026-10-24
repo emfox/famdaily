@@ -41,10 +41,22 @@ final class RecordingGateway implements NotificationGateway {
   Future<bool> hasPermission() async => true;
 
   @override
+  Future<bool> requestPermission() async => hasPermission();
+
+  @override
+  Future<bool> canScheduleExact() async => true;
+
+  @override
+  Future<bool> requestExactAlarms() async => true;
+
+  @override
   Future<List<int>> pendingIds() async => [for (final n in plan) n.id];
 
   @override
-  Future<int> applyPlan(List<PlannedNotification> incoming) async {
+  Future<int> applyPlan(
+    List<PlannedNotification> incoming, {
+    bool allowInexact = false,
+  }) async {
     plan = incoming;
     applyCount++;
     return incoming.length;

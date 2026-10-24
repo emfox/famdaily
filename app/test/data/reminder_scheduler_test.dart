@@ -19,21 +19,55 @@ import 'package:flutter_test/flutter_test.dart';
 
 /// 假的平台通知层：只记账，不碰系统。
 final class FakeGateway implements NotificationGateway {
-  FakeGateway({this.permissionGranted = true});
+  FakeGateway({this.permissionGranted = true, this.exactGranted = true});
 
   bool permissionGranted;
+
+  /// 精确闹钟权限（Android 12+ 的 SCHEDULE_EXACT_ALARM）。
+  ///
+  /// 单独一个开关是必要的：Android 14 起它默认不授予，而**它和通知权限
+  /// 是两件事**——有通知权限但没这一项时，`exactAllowWhileIdle` 会全部抛错，
+  /// 现象同样是"一条都收不到"。
+  bool exactGranted;
+
   List<PlannedNotification> applied = [];
   final List<int> cancelled = [];
   int cancelAllCount = 0;
+
+  /// 最近一次 applyPlan 用的是不是降级模式。
+  bool lastAllowInexact = false;
+
+  /// 用户点了几次「允许通知」。
+  int requestCount = 0;
 
   @override
   Future<bool> hasPermission() async => permissionGranted;
 
   @override
+  Future<bool> requestPermission() async {
+    requestCount++;
+    permissionGranted = true;
+    return true;
+  }
+
+  @override
+  Future<bool> canScheduleExact() async => exactGranted;
+
+  @override
+  Future<bool> requestExactAlarms() async {
+    exactGranted = true;
+    return true;
+  }
+
+  @override
   Future<List<int>> pendingIds() async => applied.map((p) => p.id).toList();
 
   @override
-  Future<int> applyPlan(List<PlannedNotification> plan) async {
+  Future<int> applyPlan(
+    List<PlannedNotification> plan, {
+    bool allowInexact = false,
+  }) async {
+    lastAllowInexact = allowInexact;
     applied = plan;
     return plan.length;
   }
@@ -557,6 +591,69 @@ void main() {
         reason: '关掉提醒是「别叫我」，不是「别记我做没做」',
       );
       expect(gateway.applied, isEmpty);
+    });
+
+    test('没有精确闹钟权限时降级成不精确，而不是一条都不排', () async {
+      // Android 14 起 SCHEDULE_EXACT_ALARM 默认不授予。此时如果还用
+      // exactAllowWhileIdle，插件会逐条抛 exact_alarms_not_permitted，
+      // 全被吞成日志 → 用户"从来没收到过提醒"。
+      gateway.exactGranted = false;
+      await db.insertTask(
+        _task('t1', time: domain.FixedTimesRule([domain.LocalTime(8, 0)])),
+        nowMs: _nowMs,
+      );
+
+      final result = await runAt(build(), DateTime(2026, 3, 20, 9));
+
+      expect(
+        gateway.lastAllowInexact,
+        isTrue,
+        reason: '没精确闹钟权限就必须降级，硬用精确模式等于不提醒',
+      );
+      expect(result.scheduled, greaterThan(0), reason: '降级了也还是得排出去');
+      expect(
+        result.exactAlarmsMissing,
+        isTrue,
+        reason: '界面要能告诉用户"会响但可能不准时"',
+      );
+    });
+
+    test('权限齐了就用精确模式，不白白降级', () async {
+      await db.insertTask(
+        _task('t1', time: domain.FixedTimesRule([domain.LocalTime(8, 0)])),
+        nowMs: _nowMs,
+      );
+
+      final result = await runAt(build(), DateTime(2026, 3, 20, 9));
+
+      expect(gateway.lastAllowInexact, isFalse);
+      expect(result.exactAlarmsMissing, isFalse);
+      expect(result.permissionMissing, isFalse);
+    });
+
+    test('没有通知权限时，结果里要标出来（界面据此给「去开启」）', () async {
+      gateway.permissionGranted = false;
+      await db.insertTask(
+        _task('t1', time: domain.FixedTimesRule([domain.LocalTime(8, 0)])),
+        nowMs: _nowMs,
+      );
+
+      final result = await runAt(build(), DateTime(2026, 3, 20, 9));
+
+      expect(
+        result.permissionMissing,
+        isTrue,
+        reason: '不标出来，用户只能猜"为什么它不响"',
+      );
+      expect(result.scheduled, 0);
+      // 数据照记。
+      expect(
+        await db.slotsBetween(
+          domain.LocalDate(2026, 3, 1),
+          domain.LocalDate(2026, 3, 20),
+        ),
+        hasLength(20),
+      );
     });
 
     test('后来给了权限，重排一次就能把提醒补上', () async {

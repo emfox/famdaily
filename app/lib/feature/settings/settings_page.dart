@@ -8,6 +8,7 @@ import '../../data/backup/backup_service.dart';
 import '../../data/repo_impl/reminder_scheduler.dart';
 import '../../domain/notification/window_policy.dart';
 import 'backup_page.dart';
+import 'reminder_permission.dart';
 import 'reminder_settings_page.dart';
 
 /// 设置页。
@@ -50,10 +51,43 @@ class _SettingsPageState extends State<SettingsPage> {
   String? _backupHint;
   ReminderSettings? _reminderSettings;
 
+  /// 系统层能力：有没有通知权限、能不能排精确闹钟。
+  ///
+  /// 单独读一次而不是并进 `_load` 的 Future.wait：这是唯一会去敲系统接口的
+  /// 一项，慢一点不该拖住整页的渲染。
+  ReminderCapability? _capability;
+
   @override
   void initState() {
     super.initState();
     _load();
+    unawaited(_loadCapability());
+  }
+
+  Future<void> _loadCapability() async {
+    final c = await readCapability(widget.services.notifications);
+    if (mounted) {
+      setState(() => _capability = c);
+    }
+  }
+
+  /// 「去开启」：申请一遍，回来把结果写回界面。
+  ///
+  /// 申请完要重排一次：没权限期间那些通知根本没进系统，光有权限没人去排。
+  Future<void> _fixCapability() async {
+    final c = await requestPermissions(widget.services.notifications);
+    if (!mounted) {
+      return;
+    }
+    setState(() => _capability = c);
+    if (c == ReminderCapability.ready) {
+      await widget.services.scheduler.reschedule(
+        trigger: RescheduleTrigger.settingsChanged,
+      );
+      if (mounted) {
+        await _load();
+      }
+    }
   }
 
   Future<void> _load() async {
@@ -162,6 +196,11 @@ class _SettingsPageState extends State<SettingsPage> {
               padding: const EdgeInsets.only(bottom: 32),
               children: [
                 const _SectionHeader('提醒'),
+                if (_capability != null)
+                  ReminderStatusBanner(
+                    capability: _capability!,
+                    onFix: _fixCapability,
+                  ),
                 SwitchListTile.adaptive(
                   value: _remindersOn,
                   onChanged: (v) => _setReminders(v),
@@ -172,7 +211,11 @@ class _SettingsPageState extends State<SettingsPage> {
                 ListTile(
                   leading: const Icon(Icons.alarm_on_outlined),
                   title: const Text('催一次 / 免打扰'),
-                  subtitle: Text(_reminderSummary),
+                  subtitle: Text(
+                    _capability == null || !_capability!.needsAction
+                        ? _reminderSummary
+                        : ' · ${_capability!.label}',
+                  ),
                   trailing: const Icon(Icons.chevron_right, size: 18),
                   enabled: _remindersOn,
                   onTap: _remindersOn ? () => unawaited(_openReminders()) : null,

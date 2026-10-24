@@ -14,6 +14,7 @@ import '../../domain/model/task.dart';
 import '../../domain/model/task_status.dart';
 import '../../domain/notification/window_policy.dart';
 import '../members/member_detail_page.dart';
+import '../settings/reminder_permission.dart';
 import '../members/member_service.dart';
 import '../task_detail/task_detail_page.dart';
 import '../task_detail/task_detail_service.dart';
@@ -419,7 +420,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
     await _afterChange();
   }
-
   /// 新建打卡项（ui-spec §2 三步式）。
   Future<void> _newTask() async {
     if (_members.isEmpty) {
@@ -446,7 +446,54 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (saved != true || !mounted) {
       return;
     }
+    // 先重排（把刚建好的这项排进系统），再问权限。
+    //
+    // 顺序不能反：先问权限的话，用户看到的是"允许 Famdaily 发送通知吗"，
+    // 而此刻他连一个提醒都还没看到；先重排、再问，弹框紧跟在
+    // "每天 9:00 提醒你吃降压药"之后，用户知道自己在允许什么。
+    //
+    // 只问一次（见 `askPermissionOnce`）。之后想改只能去设置页。
     await _afterChange();
+    if (!mounted) {
+      return;
+    }
+    await _askReminderPermissionOnce();
+  }
+
+  /// 建完第一个打卡项之后问一次提醒权限。
+  ///
+  /// **这是整个提醒功能能不能响起来的关键一步**。之前它根本不存在——
+  /// `requestPermission()` 写了却没人调用，于是 Android 13+ 上永远是
+  /// "没权限"，一条通知都排不出去。
+  Future<void> _askReminderPermissionOnce() async {
+    final db = widget.services.db;
+    final capability = await askPermissionOnce(
+      gateway: widget.services.notifications,
+      readFlag: (k) => db.getSetting(k),
+      writeFlag: (k) => db.setSetting(
+        k,
+        'true',
+        nowMs: appNow().millisecondsSinceEpoch,
+      ),
+    );
+    if (capability == null || !mounted) {
+      return;
+    }
+    debugLogCapability(capability);
+    if (capability == ReminderCapability.noPermission) {
+      // 拒绝了就不再纠缠，但要说清楚后果——不说的话用户以为功能坏了。
+      _toast('没开通知权限，到点不会弹提醒。打卡数据照常记录');
+      return;
+    }
+    if (capability == ReminderCapability.inexactOnly) {
+      _toast('系统限制了精确闹钟，提醒可能晚几分钟');
+    }
+    // 重新排一次：刚才那次重排是在没有权限的情况下做的，通知没进系统。
+    unawaited(
+      widget.services.scheduler.reschedule(
+        trigger: RescheduleTrigger.settingsChanged,
+      ),
+    );
   }
 
   /// 表单里点「创建 / 保存」时落到库里的动作。

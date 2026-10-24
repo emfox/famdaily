@@ -41,15 +41,20 @@ final class RescheduleResult {
     required this.scheduled,
     required this.truncated,
     required this.skippedReason,
+    this.exactAlarmsMissing = false,
+    this.permissionMissing = false,
   });
 
-  const RescheduleResult.skipped(String reason)
-    : windowEnd = null,
-      slots = 0,
-      planned = 0,
-      scheduled = 0,
-      truncated = false,
-      skippedReason = reason;
+  const RescheduleResult.skipped(
+    String reason, {
+    this.permissionMissing = false,
+    this.exactAlarmsMissing = false,
+  }) : windowEnd = null,
+       slots = 0,
+       planned = 0,
+       scheduled = 0,
+       truncated = false,
+       skippedReason = reason;
 
   /// 窗口覆盖到哪一天。
   final LocalDate? windowEnd;
@@ -69,10 +74,18 @@ final class RescheduleResult {
   /// 没排的原因（权限没给 / 提醒全局关闭 / …）。
   final String? skippedReason;
 
+  /// 系统通知权限没给。界面据此给出「去开启」的入口——
+  /// 不给提示的话，用户只会觉得"这个 App 的提醒是坏的"。
+  final bool permissionMissing;
+
+  /// 精确闹钟权限没给，已降级成不精确：会响，但可能晚几分钟到几十分钟。
+  final bool exactAlarmsMissing;
+
   @override
   String toString() =>
       'Reschedule(window→$windowEnd, slots=$slots, planned=$planned, '
-      'scheduled=$scheduled, truncated=$truncated, skip=$skippedReason)';
+      'scheduled=$scheduled, truncated=$truncated, skip=$skippedReason'
+      '${exactAlarmsMissing ? ', inexact=true' : ''})';
 }
 
 /// 重排器。
@@ -138,6 +151,18 @@ final class ReminderScheduler {
     if (!enabled) {
       await _notifications.cancelAll();
     }
+
+    // Android 12+ 的「闹钟和提醒」权限（SCHEDULE_EXACT_ALARM）。
+    //
+    // 没有它的时候 `exactAllowWhileIdle` **不是延后，是直接抛错**：
+    //     PlatformException(exact_alarms_not_permitted)
+    // 而我们逐条排的时候把单条失败吞成了 debugPrint，于是整批都是日志里的
+    // 一行字，用户那边安安静静——"一条都收不到"就是这么来的。
+    //
+    // 处理：先问一次，拿不到就整批降级成不精确闹钟。不精确会被系统合并、
+    // 推迟几分钟到几十分钟，**但总比不响强**；同时把降级写进 skippedReason
+    // 让界面能提示用户去开权限（见 result.exactAlarmsMissing）。
+    final exact = enabled ? await _notifications.canScheduleExact() : false;
 
     // ---- 组装排程输入 ----
     final tasks = await _db.listAllTasks();
@@ -262,7 +287,11 @@ final class ReminderScheduler {
     // ---- 交给系统 ----
     // 没有权限时 capped 本来就是空的，但这一步还会清掉系统里的残留，
     // 所以照常调用。
-    final scheduled = await _notifications.applyPlan(capped);
+    // 精度不够就降级：会晚一点，但不会一条不响。
+    final scheduled = await _notifications.applyPlan(
+      capped,
+      allowInexact: !exact,
+    );
 
     await _db.setSetting(
       SettingsKeys.lastScheduledFor,
@@ -276,12 +305,26 @@ final class ReminderScheduler {
       planned: plannedAll.length,
       scheduled: scheduled,
       truncated: expansion.truncated || capped.length < plannedAll.length,
-      skippedReason: enabled && granted
-          ? null
-          : (enabled ? '没有通知权限，只记数据不提醒' : '提醒已全局关闭，只记数据不提醒'),
+      skippedReason: _plainReason(enabled: enabled, granted: granted),
+      permissionMissing: enabled && !granted,
+      exactAlarmsMissing: enabled && granted && !exact,
     );
     debugPrint('[reminder] $result');
     return result;
+  }
+
+  /// 只说明"为什么没提醒"，不解释"为什么没数据"——数据永远都会记。
+  static String? _plainReason({
+    required bool enabled,
+    required bool granted,
+  }) {
+    if (!enabled) {
+      return '提醒已全局关闭，只记数据不提醒';
+    }
+    if (!granted) {
+      return '没有通知权限，只记数据不提醒';
+    }
+    return null;
   }
 
   /// 打卡后立即取消该槽位的提醒（不等下一次全量重排）。

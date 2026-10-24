@@ -38,14 +38,38 @@ abstract final class NotificationChannels {
 /// 抽出接口的唯一目的是**测试**：真机上没法在单测里排系统通知，
 /// 而"重排逻辑是否正确"是业务风险最高的地方，必须能测。
 abstract interface class NotificationGateway {
-  /// 当前是否已授权。
+  /// 当前是否已授权（通知权限）。
   Future<bool> hasPermission();
+
+  /// 申请通知权限（会弹系统框）。
+  ///
+  /// 为什么不放在 [init] 里：Android 13+ 的权限框一弹出来就是一句冷冰冰的
+  /// "允许 Famdaily 发送通知吗"，用户此刻还不知道这个 App 干嘛的。放到
+  /// "用户建完第一个打卡项、看到页面上写着几点提醒"之后再问，通过率高得多，
+  /// 也符合"先给价值再要权限"的常识。
+  Future<bool> requestPermission();
+
+  /// 能否精确到分钟地排闹钟（Android 12+ 的 SCHEDULE_EXACT_ALARM）。
+  ///
+  /// 非 Android 平台恒为 true。没有这个权限时 `exactAllowWhileIdle` 会排失败，
+  /// **而且不是延后、是直接抛错**——用户看到的现象就是"一条都收不到"。
+  Future<bool> canScheduleExact();
+
+  /// 引导用户去系统设置里打开「闹钟和提醒」（Android 12+）。
+  Future<bool> requestExactAlarms();
 
   /// 系统里还没发的通知 ID。
   Future<List<int>> pendingIds();
 
   /// 按清单重排，返回实际排上的条数。
-  Future<int> applyPlan(List<PlannedNotification> plan);
+  ///
+  /// [allowInexact]：没有精确闹钟权限时传 true，降级成不精确闹钟。
+  /// 不降级的话那批 `zonedSchedule` 会全部抛 `exact_alarms_not_permitted`，
+  /// 用户那边一条都不响——"从来没收到过提醒"就是这么来的。
+  Future<int> applyPlan(
+    List<PlannedNotification> plan, {
+    bool allowInexact = false,
+  });
 
   /// 取消某个槽位的提醒与催办。
   Future<void> cancelSlot({
@@ -127,6 +151,7 @@ final class NotificationService implements NotificationGateway {
   /// 申请权限。返回是否拿到。
   ///
   /// iOS 与 Android 13+ 都要显式问；Android 12 及以下直接返回 true。
+  @override
   Future<bool> requestPermission() async {
     if (!_ready) {
       return false;
@@ -184,6 +209,41 @@ final class NotificationService implements NotificationGateway {
     return true;
   }
 
+  /// 能否精确到分钟地排闹钟。
+  ///
+  /// Android 14 起 `SCHEDULE_EXACT_ALARM` 默认**不授予**（日历、闹钟类应用除外，
+  /// 且要单独申请）。没有它时 `exactAllowWhileIdle` 不是"降级成不精确"，
+  /// 而是 `PlatformException(exact_alarms_not_permitted)` 直接失败——
+  /// 我们这里又把单条失败吞成了日志，于是现象就是"安安静静，一条都不响"。
+  @override
+  Future<bool> canScheduleExact() async {
+    if (!_ready || kIsWeb || !Platform.isAndroid) {
+      return true;
+    }
+    final android = _plugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
+    return await android?.canScheduleExactNotifications() ?? false;
+  }
+
+  /// 拉起系统的「闹钟和提醒」授权页。
+  ///
+  /// 这个权限**不是普通运行时权限**，没有可以直接弹的对话框，只能跳系统设置。
+  /// 返回用户回来时是否已经给了。
+  @override
+  Future<bool> requestExactAlarms() async {
+    if (!_ready || kIsWeb || !Platform.isAndroid) {
+      return true;
+    }
+    final android = _plugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
+    final granted = await android?.requestExactAlarmsPermission();
+    return granted ?? await canScheduleExact();
+  }
+
   /// 取系统当前还没发的通知 ID 列表。
   ///
   /// iOS 有 64 条上限，这里拿到的数量就是"还剩多少额度"的依据。
@@ -201,7 +261,10 @@ final class NotificationService implements NotificationGateway {
   /// **只取消"不在新清单里"的那些**，不清空全部。原因：清空再重建之间
   /// 有个空窗期，如果这时进程被杀（用户切走 App），提醒就全丢了。
   @override
-  Future<int> applyPlan(List<PlannedNotification> plan) async {
+  Future<int> applyPlan(
+    List<PlannedNotification> plan, {
+    bool allowInexact = false,
+  }) async {
     if (!_ready) {
       return 0;
     }
@@ -223,7 +286,9 @@ final class NotificationService implements NotificationGateway {
           // 一次性排定，不用 periodicallyShow：后者算不准跨天与免打扰。
           scheduledDate: _toTz(p.at),
           notificationDetails: _details(),
-          androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+          androidScheduleMode: allowInexact
+              ? AndroidScheduleMode.inexactAllowWhileIdle
+              : AndroidScheduleMode.exactAllowWhileIdle,
           payload: _payload(p),
         );
         scheduled++;

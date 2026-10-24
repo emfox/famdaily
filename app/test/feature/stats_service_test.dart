@@ -413,10 +413,22 @@ final class _NoopGateway implements NotificationGateway {
   Future<bool> hasPermission() async => true;
 
   @override
+  Future<bool> requestPermission() async => hasPermission();
+
+  @override
+  Future<bool> canScheduleExact() async => true;
+
+  @override
+  Future<bool> requestExactAlarms() async => true;
+
+  @override
   Future<List<int>> pendingIds() async => const [];
 
   @override
-  Future<int> applyPlan(List<PlannedNotification> plan) async => 0;
+  Future<int> applyPlan(
+    List<PlannedNotification> plan, {
+    bool allowInexact = false,
+  }) async => 0;
 
   @override
   Future<void> cancelSlot({
@@ -435,10 +447,22 @@ final class _DeniedGateway implements NotificationGateway {
   Future<bool> hasPermission() async => false;
 
   @override
+  Future<bool> requestPermission() async => false;
+
+  @override
+  Future<bool> canScheduleExact() async => true;
+
+  @override
+  Future<bool> requestExactAlarms() async => true;
+
+  @override
   Future<List<int>> pendingIds() async => const [];
 
   @override
-  Future<int> applyPlan(List<PlannedNotification> plan) async => 0;
+  Future<int> applyPlan(
+    List<PlannedNotification> plan, {
+    bool allowInexact = false,
+  }) async => 0;
 
   @override
   Future<void> cancelSlot({

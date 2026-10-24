@@ -47,10 +47,22 @@ final class _FakeGateway implements NotificationGateway {
   Future<bool> hasPermission() async => true;
 
   @override
+  Future<bool> requestPermission() async => hasPermission();
+
+  @override
+  Future<bool> canScheduleExact() async => true;
+
+  @override
+  Future<bool> requestExactAlarms() async => true;
+
+  @override
   Future<List<int>> pendingIds() async => applied.map((p) => p.id).toList();
 
   @override
-  Future<int> applyPlan(List<PlannedNotification> plan) async {
+  Future<int> applyPlan(
+    List<PlannedNotification> plan, {
+    bool allowInexact = false,
+  }) async {
     applied = plan;
     return plan.length;
   }
