@@ -1,0 +1,14 @@
+{
+  "name": "famdaily-sync",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Famdaily 的同步中转服务：一个总在睡觉的公共记事本",
+  "type": "module",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "start": "node index.mjs",
+    "test": "node --test \"test/*.test.mjs\""
+  }
+}

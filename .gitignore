@@ -27,3 +27,6 @@ app/ios/Pods/
 app/android/local.properties
 app/android/.gradle/
 app/android/key.properties
+
+# 同步服务：数据库与 WAL 文件是运行时数据，不进仓库
+server/data/
