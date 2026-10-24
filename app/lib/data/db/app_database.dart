@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:drift/drift.dart';
 
 // 转换器列（courseStart / date / dueTime…）在生成的 .g.dart（part）里
@@ -8,9 +10,13 @@ import '../../domain/model/local_time.dart';
 // 其余领域类型与生成的行类撞名，用前缀区分开。
 import '../../domain/model/checkin.dart' as domain;
 import '../../domain/model/checkin_state.dart' as domain;
+import '../../domain/model/course.dart' as course;
 import '../../domain/model/member.dart' as domain;
 import '../../domain/model/task.dart' as domain;
 import '../../domain/model/task_status.dart' as domain;
+// 同步协议的 DTO 与合并结果：落库时要用它们的形状，不引入别的依赖。
+import '../sync/sync_merge.dart';
+import '../sync/sync_protocol.dart';
 // 平台连接走条件导入：Web 没有 dart:ffi，native 实现不能进编译单元。
 import 'db_connection.dart';
 import 'mappers.dart';
@@ -521,6 +527,216 @@ class AppDatabase extends _$AppDatabase {
   }
 
   // ---------------------------------------------------------------------
+  // 同步（P3）
+  //
+  // 共同约定，每个 applyRemote* 都一样：
+  // 1. **不碰 change_log、不刷新 updated_at_ms**。远端来的行是"服务端
+  //    已经认过的版本"，再记一次变更只会立刻又被推上去，来回一遍之后
+  //    updated_at_ms 被推成"现在"，两端的 LWW 判定就永远不再是平局。
+  // 2. **内容一字不差就 `return`**，连 UPDATE 都不发。发了 UPDATE 就等于
+  //    "这次同步改过东西"，界面会白闪一次，日志也会骗人。
+  // 3. 结论（谁赢）由 `sync_merge.dart` 的纯函数给出，这里只负责落库。
+  //    合并规则放这里就会被 widget 测试之外的东西挡住，测不全。
+  // ---------------------------------------------------------------------
+
+  /// 落一行远端成员。返回**真的写了没有**（调用方拿它做"这次同步改了
+  /// 多少行"的计数，界面据此决定要不要刷新）。
+  ///
+  /// [winner] 传 [MergeWinner.local] 时只读一行、什么都不写 —— 调用方
+  /// 需要本地那份来做后续判断（比如项目指向哪个成员），省它再查一次。
+  Future<bool> applyRemoteMember(MemberDto remote, MergeWinner winner) async {
+    if (winner == MergeWinner.local) {
+      return false;
+    }
+    final row = await (select(members)..where((t) => t.id.equals(remote.id)))
+        .getSingleOrNull();
+    if (winner == MergeWinner.identical) {
+      return false;
+    }
+    final m = remote.toDomain();
+    if (row == null) {
+      await into(members).insert(Mappers.memberToCompanion(m));
+    } else {
+      await (update(members)..where((t) => t.id.equals(remote.id)))
+          .write(Mappers.memberToCompanion(m));
+    }
+    return true;
+  }
+
+  /// 落一行远端项目。同 [applyRemoteMember] 的三条约定。
+  ///
+  /// 两列要**显式**写，`Mappers.taskToCompanion` 覆盖不到：
+  /// - `rules_effective_from`：它是"改规则不影响历史"的边界，漏写就会让
+  ///   另一端刚改的规则从三个月前开始生效。
+  /// - `course_total_days`：领域模型的 `Course` 只有起止日期、"连续 N 天"
+  ///   这个形态只存在这一列上。漏写的话模板回显的"第 3/7 天"会变成
+  ///   "第 3/未知天" —— 而且**只有同步过来的项目**才坏，本机新建的正常，
+  ///   非常难查。
+  Future<bool> applyRemoteTask(TaskDto remote, MergeWinner winner) async {
+    if (winner == MergeWinner.local) {
+      return false;
+    }
+    final row = await (select(tasks)..where((t) => t.id.equals(remote.id)))
+        .getSingleOrNull();
+    if (winner == MergeWinner.identical) {
+      return false;
+    }
+    final t = _taskFromDto(remote);
+    final companion = Mappers.taskToCompanion(t).copyWith(
+      courseTotalDays: Value(remote.courseTotalDays),
+      // 协议里是 'YYYY-MM-DD' 字面量，列上挂了 LocalDateConverter，得转。
+      rulesEffectiveFrom: Value(
+        remote.rulesEffectiveFrom == null
+            ? null
+            : LocalDate.parse(remote.rulesEffectiveFrom!),
+      ),
+    );
+    if (row == null) {
+      await into(tasks).insert(companion);
+    } else {
+      await (update(tasks)..where((x) => x.id.equals(remote.id)))
+          .write(companion);
+    }
+    return true;
+  }
+
+  /// 按 `(taskId, date, slotIndex)` 找一条打卡，**含服务端墓碑留下的行**。
+  Future<domain.CheckinRecord?> findCheckin({
+    required String taskId,
+    required LocalDate date,
+    required int slotIndex,
+  }) async {
+    final row = await (select(checkins)..where(
+          (t) => t.taskId.equals(taskId) &
+              t.date.equals(date.toString()) &
+              t.slotIndex.equals(slotIndex),
+        ))
+        .getSingleOrNull();
+    return row == null ? null : Mappers.checkinFromRow(row);
+  }
+
+  /// 落一行远端打卡。合并后的状态由 [merged] 给出（见 `mergeCheckin`）。
+  ///
+  /// **`id` 的归属**：远端没有 id（打卡的身份是三元组）。本地已有这条就
+  /// 沿用本地 id，没有才新生成一个 —— 换个 id 会让照片、本地的引用一起断。
+  /// 照片（`photo_path`）同理不搬：它是本地路径，跟着远端 id 走等于指着
+  /// 一个不存在的文件。
+  Future<bool> applyRemoteCheckin(
+    CheckinDto remote,
+    MergedCheckin merged,
+    String Function() newId, {
+    required int nowMs,
+  }) async {
+    final date = remote.dateValue();
+    final existing = await findCheckin(
+      taskId: remote.taskId,
+      date: date,
+      slotIndex: remote.slotIndex,
+    );
+    if (existing != null && !checkinChanged(existing, merged)) {
+      return false;
+    }
+    final record = domain.CheckinRecord(
+      id: existing?.id ?? newId(),
+      taskId: remote.taskId,
+      date: date,
+      slotIndex: remote.slotIndex,
+      state: merged.state,
+      doneAtMs: merged.doneAtMs,
+      dueAtMinuteOfDay: merged.dueAtMinuteOfDay,
+      note: merged.note,
+      photoPath: existing?.photoPath,
+    );
+    final companion = Mappers.checkinToCompanion(record, nowMs);
+    if (existing == null) {
+      await into(checkins).insert(companion);
+    } else {
+      await (update(checkins)..where((t) => t.id.equals(existing.id)))
+          .write(companion);
+    }
+    return true;
+  }
+
+  /// 删掉一条打卡（服务端墓碑）。本来就没有则什么都不做。
+  ///
+  /// 这里用真删而不是留一行 deleted：本地没有墓碑机制，留一行"已删"的
+  /// 打卡会被 `checkinsOn` 一起查出来，日历上凭空多一次。
+  /// 返回删掉了没有（本来就没有 → false）。
+  Future<bool> dropCheckin({
+    required String taskId,
+    required LocalDate date,
+    required int slotIndex,
+  }) async {
+    final existing = await findCheckin(
+      taskId: taskId,
+      date: date,
+      slotIndex: slotIndex,
+    );
+    if (existing == null) {
+      return false;
+    }
+    await (delete(checkins)..where((t) => t.id.equals(existing.id))).go();
+    return true;
+  }
+
+  /// 落一行远端设置，带远端自己的 `updated_at_ms`。
+  ///
+  /// 不能复用 [setSetting]：那个固定写"现在"，会让下一次同步的 LWW 判定
+  /// 永远判本地赢，远端改的设置再也进不来。
+  Future<bool> applyRemoteSetting(SettingDto remote) async {
+    final row = await (select(settings)
+          ..where((t) => t.key.equals(remote.key)))
+        .getSingleOrNull();
+    if (row != null &&
+        row.value == remote.value &&
+        row.updatedAtMs == remote.updatedAtMs) {
+      return false;
+    }
+    await into(settings).insertOnConflictUpdate(
+      SettingsCompanion.insert(
+        key: remote.key,
+        value: remote.value,
+        updatedAtMs: remote.updatedAtMs,
+      ),
+    );
+    return true;
+  }
+
+  Future<int?> settingUpdatedAt(String key) async {
+    final row = await (select(settings)..where((t) => t.key.equals(key)))
+        .getSingleOrNull();
+    return row?.updatedAtMs;
+  }
+
+  /// 某个项目下的全部打卡（含各天），同步推全量时的原料之一。
+  Future<List<domain.CheckinRecord>> checkinsOfTask(String taskId) async {
+    final rows = await (select(checkins)..where((t) => t.taskId.equals(taskId)))
+        .get();
+    return rows.map<domain.CheckinRecord>(Mappers.checkinFromRow).toList();
+  }
+
+  /// **全部**打卡，不分日期。推全量用：只推最近 30 天的话，另一端
+  /// 会把它没见过的更早记录当成"我这没有"，反过来打墓碑。
+  Future<List<domain.CheckinRecord>> listAllCheckins() async {
+    final rows = await select(checkins).get();
+    return rows.map<domain.CheckinRecord>(Mappers.checkinFromRow).toList();
+  }
+
+  /// 全部设置，含 `updated_at_ms`。同步要拿时间戳判 LWW。
+  Future<Map<String, SettingDto>> listSyncedSettings() async {
+    final rows = await select(settings).get();
+    return {
+      for (final r in rows)
+        if (syncedSettingKeys.contains(r.key))
+          r.key: SettingDto(
+            key: r.key,
+            value: r.value,
+            updatedAtMs: r.updatedAtMs,
+          ),
+    };
+  }
+
+  // ---------------------------------------------------------------------
   // 备份（导出 / 恢复）
   // ---------------------------------------------------------------------
 
@@ -667,3 +883,36 @@ final class BackupCounts {
 /// 实现见 db_connection_io.dart / db_connection_web.dart：
 /// Web 没有 dart:ffi，必须靠条件导入把 native 实现挡在编译单元之外。
 QueryExecutor _openConnection() => openPlatformConnection();
+
+/// 协议里的项目行 → 领域模型。
+///
+/// 规则 JSON 在这里才被解释（用 `RuleCodec`，与 `Mappers.taskFromRow` 同一
+/// 套解码器）。放函数而不是塞进 [TaskDto] 是刻意的：协议层不许认识
+/// `RuleCodec` 背后的规则版本，服务端也不解释规则内容。
+///
+/// 起止日期只给了一个（正常不该发生）时抛错，不做"补成同一天"的猜测：
+/// 猜出来的疗程会凭空多出好几天，用户看不出来。
+domain.Task _taskFromDto(TaskDto d) {
+  final start = d.courseStart == null ? null : LocalDate.parse(d.courseStart!);
+  final end = d.courseEnd == null ? null : LocalDate.parse(d.courseEnd!);
+  return domain.Task(
+    id: d.id,
+    memberId: d.memberId,
+    name: d.name,
+    note: d.note,
+    iconId: d.iconId,
+    repeat: RuleCodec.decodeRepeat(
+      (jsonDecode(d.repeatJson) as Map).cast<String, dynamic>(),
+    ),
+    time: RuleCodec.decodeTime(
+      (jsonDecode(d.timeJson) as Map).cast<String, dynamic>(),
+    ),
+    course: course.Course.fromRange(start, end),
+    status: d.status,
+    reminderEnabled: d.reminderEnabled,
+    sortOrder: d.sortOrder,
+    createdAtMs: d.createdAtMs,
+    updatedAtMs: d.updatedAtMs,
+    deletedAtMs: d.deletedAtMs,
+  );
+}
