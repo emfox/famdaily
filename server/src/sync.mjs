@@ -206,6 +206,30 @@ function asArray(v, kind) {
  * 然后两条数据在两边永远不同、每次同步都互相覆盖一次。
  */
 function upsertMember(db, familyId, m, at) {
+  const before = db
+    .prepare(
+      `SELECT updated_at_ms, server_at_ms, name, avatar_id, sort_order, deleted_at_ms
+         FROM members WHERE family_id = ? AND id = ?`,
+    )
+    .get(familyId, m.id);
+
+  // **内容一字不差就不必写**。全量推送意味着每次同步都会把整家数据重发
+  // 一遍；如果每一行都刷新 `server_at_ms`，那所有行每次同步都"变新"，
+  // 对端永远在拉同样的数据，白耗流量，还会把真正变化的那几行淹掉。
+  //
+  // 这个判断必须在 INSERT **之前**做。一开始写在后面，等于拿"刚写进去的
+  // 行"和"推上来的行"比，永远相等，于是什么都没写 —— 症状是
+  // "同步显示成功，但数据没变"。
+  if (
+    before !== undefined &&
+    before.name === m.name &&
+    (before.avatar_id ?? null) === (m.avatarId ?? null) &&
+    before.sort_order === m.sortOrder &&
+    (before.deleted_at_ms ?? null) === (m.deletedAtMs ?? null)
+  ) {
+    return undefined;
+  }
+
   db.prepare(
     `INSERT INTO members (family_id, id, name, avatar_id, sort_order,
                           created_at_ms, updated_at_ms, deleted_at_ms, server_at_ms)
@@ -229,9 +253,23 @@ function upsertMember(db, familyId, m, at) {
     m.deletedAtMs,
     at,
   );
+  return before === undefined ? at : before.server_at_ms;
 }
 
 function upsertTask(db, familyId, t, at) {
+  const before = db
+    .prepare(
+      `SELECT updated_at_ms, server_at_ms, member_id, name, note, icon_id, repeat_json,
+              time_json, course_start, course_end, status, reminder_enabled,
+              sort_order, rules_effective_from, deleted_at_ms
+         FROM tasks WHERE family_id = ? AND id = ?`,
+    )
+    .get(familyId, t.id);
+
+  if (before !== undefined && taskContentSame(before, t)) {
+    return undefined;
+  }
+
   db.prepare(
     `INSERT INTO tasks (family_id, id, member_id, name, note, icon_id,
                         repeat_json, time_json, course_start, course_end,
@@ -278,6 +316,26 @@ function upsertTask(db, familyId, t, at) {
     t.deletedAtMs,
     at,
   );
+  return before === undefined ? at : before.server_at_ms;
+}
+
+/** 与 [upsertMember] 的"内容没变就不写"同一套理由，字段多所以单独一段。 */
+function taskContentSame(before, t) {
+  return (
+    before.member_id === t.memberId &&
+    before.name === t.name &&
+    (before.note ?? null) === (t.note ?? null) &&
+    (before.icon_id ?? null) === (t.iconId ?? null) &&
+    before.repeat_json === t.repeatJson &&
+    before.time_json === t.timeJson &&
+    (before.course_start ?? null) === (t.courseStart ?? null) &&
+    (before.course_end ?? null) === (t.courseEnd ?? null) &&
+    before.status === t.status &&
+    before.reminder_enabled === t.reminderEnabled &&
+    before.sort_order === t.sortOrder &&
+    (before.rules_effective_from ?? null) === (t.rulesEffectiveFrom ?? null) &&
+    (before.deleted_at_ms ?? null) === (t.deletedAtMs ?? null)
+  );
 }
 
 /**
@@ -320,17 +378,22 @@ function upsertCheckin(db, familyId, c, at) {
       c.updatedAtMs,
       at,
     );
-    return;
+    return at;
   }
 
-  // 服务端已经有墓碑，而这次推上来的写入比墓碑更旧 → 说明是另一个人
-  // 带着过期状态来推的。保持删除，不复活。
+  // 服务端已经有墓碑。"删得晚"就保持删除——晚于**墓碑所取代的那次写入**。
+  //
+  // 这里的基准必须是 `updated_at_ms`（被删那条最后一次写入的时刻），
+  // **不是 `deleted_at_ms`，也不是"现在"**。踩过一次：原先拿
+  // `deleted_at_ms > c.updatedAtMs` 判断，结果只要墓碑是刚刚建立的，
+  // 任何稍后重新打的卡都被判成"更旧"→ 永远复活不了。
+  // 拿"现在"比更糟：B 手机离线一小时再推，它的写入永远"更旧"。
   if (existing.deleted === 1) {
-    const deletedAt = existing.deleted_at_ms ?? 0;
-    if (deletedAt > c.updatedAtMs) {
+    const lastWrite = existing.updated_at_ms ?? 0;
+    if (lastWrite >= c.updatedAtMs) {
       return;
     }
-    // 删除更旧 → 这次是"撤销之后又重新打了卡"，复活。
+    // 写入更晚 → 这次是"撤销之后又重新打了卡"，复活。
     // 复活必须是整行覆盖，否则会留下"状态是 done 但 deleted=1"的怪行。
     db.prepare(
       `UPDATE checkins SET state = ?, done_at_ms = ?, due_at_minute_of_day = ?, note = ?,
@@ -349,7 +412,7 @@ function upsertCheckin(db, familyId, c, at) {
       c.date,
       c.slotIndex,
     );
-    return;
+    return at;
   }
 
   const merged = mergeCheckinState(existing, c);
@@ -360,7 +423,10 @@ function upsertCheckin(db, familyId, c, at) {
     merged.doneAtMs !== existing.done_at_ms ||
     merged.note !== existing.note ||
     merged.dueAtMinuteOfDay !== existing.due_at_minute_of_day;
-  if (!changed) return;
+  // 返回 `undefined` = **这一行没有被写过**。调用方据此决定要不要
+  // 把它算进本次的"最高水位"。不这么做的话，每次全量推送都会把所有行
+  // 刷新一遍 server_at_ms，对端永远在拉同样的数据。
+  if (!changed) return undefined;
 
   db.prepare(
     `UPDATE checkins SET state = ?, done_at_ms = ?, due_at_minute_of_day = ?, note = ?,
@@ -378,6 +444,7 @@ function upsertCheckin(db, familyId, c, at) {
     c.date,
     c.slotIndex,
   );
+  return at;
 }
 
 /**
@@ -449,13 +516,20 @@ export function mergeCheckinState(existing, incoming) {
  * 也就无从删除。等 B 上线推上来，这条会正常写入。所以**结果是
  * "不会丢数据"，代价是"删除可能失效"**。对这个产品来说这是对的方向。
  */
-function applyCheckinDeletes(db, familyId, keepKeys, deviceId, at) {
+function applyCheckinDeletes(db, familyId, keepKeys, deviceId, at, since) {
+  // **只对本批之前就已经存在的行做墓碑判断**（`server_at_ms <= since`）。
+  //
+  // 踩过一个大坑：这里的 `since` 用了客户端传的 `since`（也就是"我上次拉到
+  // 哪儿"），结果**只推不拉**的那种请求（`since` 为最近值）会把所有更早的
+  // 打卡全判成"客户端没有它"→ 全部打上墓碑。症状是"刚打的卡，同步一下
+  // 就没了"。把范围收窄到"本批推上来的行之前就已经在库里的那些"，
+  // 才能表达"客户端这次的全量状态里没有它"。
   const rows = db
     .prepare(
       `SELECT task_id, date, slot_index, updated_at_ms FROM checkins
-        WHERE family_id = ? AND deleted = 0`,
+        WHERE family_id = ? AND deleted = 0 AND server_at_ms <= ?`,
     )
-    .all(familyId);
+    .all(familyId, since);
 
   const keep = keepKeys;
   let tombstoned = 0;
@@ -468,6 +542,9 @@ function applyCheckinDeletes(db, familyId, keepKeys, deviceId, at) {
     ).run(at, at, familyId, r.task_id, r.date, r.slot_index);
     tombstoned += 1;
   }
+  // 注意这里**不参与"本次最高水位"的计算**。墓碑的 `deleted_at_ms` 是
+  // 服务端时间，是客户端判断"删得晚不晚"的唯一依据，必须稳定。
+  // 如果每次全量推送都把它刷新一遍，那"删了又打"就永远判不成复活。
   return tombstoned;
 }
 
@@ -481,6 +558,7 @@ function upsertSetting(db, familyId, s, at) {
        server_at_ms = excluded.server_at_ms
      WHERE excluded.updated_at_ms >= settings.updated_at_ms`,
   ).run(familyId, s.key, s.value, s.updatedAtMs, at);
+  return at;
 }
 
 export function createSyncHandler(deps) {
@@ -508,7 +586,45 @@ export function createSyncHandler(deps) {
 
     const rejected = [];
 
-    /** 应用一类，逐条 try/catch：一条坏的不该拖累整批。 */
+    /**
+     * 应用一类，逐条 try/catch：一条坏的不该拖累整批。
+     *
+     * `write` 的返回值是这个"实际生效的水位"：
+     * - 数字 = 这一行确实以这个 `server_at_ms` 落库了
+     * - `undefined` = 完全没变，什么都没写（不该算进本次水位）
+     *
+     * 返回的 `cursor` 取**本次真正写进去的最高 server_at_ms**，而不是
+     * 时钟当前值。理由：客户端拿 cursor 当下次的 `since`，而 `since` 在
+     * 客户端那边**兼作"我推到哪儿了"的标记**（推拉合成一个请求时，
+     * `since` 只能是水位，所以这里不能替你记"你已经推过了"）。
+     * 用"本次最高"而不是"现在"，是为了让"没写任何东西"的请求也能
+     * 安全返回一个不会让客户端跳过别人的行的值。
+     */
+    let highWater = 0;
+    /**
+     * 本次请求进来时服务端的最高 `server_at_ms`（空库为 0）。
+     *
+     * 这个数**在写之前就定死**，作为本次拉取的右边界。为什么要定死：
+     * 拉取结果必须是一个"快照"，它要和响应里返回的 `cursor` 严格配套。
+     * 如果在写入之后才取边界，就会把"还没被本响应包含的行"算进 `cursor`
+     * 覆盖的范围里 —— 那些行永久丢失。
+     *
+     * 同时也**不能**让本次写入的行推进这个右边界：本批写进去的行
+     * `server_at_ms` 都大于 `baseline`，客户端本来就要把它们落库，
+     * 这次响应里也会带回去（见下面的 `pull` 的第二个条件）。
+     */
+    const baseline = clock.peek();
+
+    /**
+     * 每行一个 `server_at_ms`。**不能整批共用一个**。
+     *
+     * 踩过一次：一开始整批只取一次 `clock.next()`，于是同一批里 5 行
+     * 拿到同一个时间戳；客户端下回用这次返回的 cursor 去拉，
+     * 条件是 `server_at_ms > cursor` —— 这 5 行永远拉不到。
+     * 表现为"一次建了三个成员，另一台手机上只出现零个"。
+     */
+    const nextAt = () => clock.next();
+
     const applyEach = (list, kind, normalize, write) => {
       for (const raw of list) {
         let row;
@@ -519,7 +635,8 @@ export function createSyncHandler(deps) {
           continue;
         }
         try {
-          write(row);
+          const used = write(row, nextAt());
+          if (typeof used === 'number' && used > highWater) highWater = used;
         } catch (err) {
           rejected.push({
             kind,
@@ -532,41 +649,76 @@ export function createSyncHandler(deps) {
 
     db.exec('BEGIN IMMEDIATE');
     try {
-      const at = clock.next();
-
       // 顺序不能变：外键是 RESTRICT，先父后子。
-      applyEach(members, 'member', normalizeMember, (m) => upsertMember(db, familyId, m, at));
-      applyEach(tasks, 'task', normalizeTask, (t) => upsertTask(db, familyId, t, at));
-      applyEach(checkins, 'checkin', normalizeCheckin, (c) => upsertCheckin(db, familyId, c, at));
+      applyEach(members, 'member', normalizeMember, (m, at) => upsertMember(db, familyId, m, at));
+      applyEach(tasks, 'task', normalizeTask, (t, at) => upsertTask(db, familyId, t, at));
+      applyEach(checkins, 'checkin', normalizeCheckin, (c, at) =>
+        upsertCheckin(db, familyId, c, at),
+      );
 
       const keep = new Set(
         checkins
           .filter((c) => CHECKIN_STATES.has(c?.state))
           .map((c) => `${c.taskId}\u0000${c.date}\u0000${c.slotIndex}`),
       );
-      const tombstoned = applyCheckinDeletes(db, familyId, keep, device.deviceId, at);
+      // **只有"客户端明确推了 checkins 字段"才做墓碑判断。**
+      //
+      // 这是全量推送设计里必须区分的一件事：`checkins: []` 有两种含义——
+      // 「我本地一条都没有」和「我这次只来拉数据，没打算推」。
+      // 前者是真的撤销，后者是绝大多数请求（冷启动拉一次、回前台拉一次）。
+      // 区分标志就是**这个字段在不在**，而不是它是不是空数组。
+      //
+      // 踩过一次，症状非常典型：只拉不推的请求把所有打卡全打上墓碑，
+      // 表现为"刚打的卡，切出去回来就没了"。
+      const declaresCheckins = Object.prototype.hasOwnProperty.call(body ?? {}, 'checkins');
+      const tombstoned = declaresCheckins
+        ? applyCheckinDeletes(db, familyId, keep, device.deviceId, nextAt(), baseline)
+        : 0;
 
-      applyEach(settings, 'setting', normalizeSetting, (s) => upsertSetting(db, familyId, s, at));
+      applyEach(settings, 'setting', normalizeSetting, (s, at) =>
+        upsertSetting(db, familyId, s, at),
+      );
 
       db.exec('COMMIT');
 
       // 拉取：所有 server_at_ms > since 的行（含墓碑——墓碑也要传，
       // 否则对端不知道"这条被撤销了"，会一直显示已打卡）。
+      // 拉取的右边界 = 本响应能覆盖到的最高值。
+      //
+      // `highWater` 是"本批真正写下去的最高值"，`baseline` 是"进来时库里的
+      // 最高值"。两者取大：本次什么都没写时 `highWater` 为 0，此时右边界
+      // 必须退回 `baseline`，否则 `<= 0` 恒假、一条都拉不到；
+      // 写了东西时右边界取 `highWater`，正好把"别人的历史 + 本批自己写的"
+      // 一起搬回来。
+      const upperBound = Math.max(baseline, highWater);
       const pull = (table, orderBy) =>
         db
           .prepare(
-            `SELECT * FROM ${table} WHERE family_id = ? AND server_at_ms > ? ORDER BY ${orderBy} LIMIT 20000`,
+            `SELECT * FROM ${table}
+              WHERE family_id = ? AND server_at_ms > ? AND server_at_ms <= ?
+              ORDER BY ${orderBy} LIMIT 20000`,
           )
-          .all(familyId, since);
+          .all(familyId, since, upperBound);
 
-      const cursor = clock.peek();
+      const cursor = highWater;
 
       return {
         ok: true,
-        cursor,
+        // 拉取水位：客户端用它当下次的 `since`。
+        //
+        // 语义是"本响应**已经覆盖到**的边界" = `max(baseline, highWater)`：
+        // - 落在 `<= baseline` 的行：全在响应里（别人写的）
+        // - 落在 `(baseline, highWater]` 的行：全在响应里（本批自己写的）
+        // - 落在 `> highWater` 的行：本次之后才写的，留给下次
+        //
+        // 所以用"现在"是错的（会把响应里没有的行算进去 = 永久丢），
+        // 用纯 `baseline` 也是错的（本批写的行已经返回了，却还要再拉一遍）。
+        cursor: Math.max(baseline, highWater),
         // `since` 是客户端水位；如果它比服务端当前的还大（换机、时钟回拨），
         // 说明客户端的钟不可信 → 告诉它，并让它下次传 0 全量重来。
-        sinceReset: since > cursor,
+        // `highWater` 单独给出来，客户端用它判断"我这条到底写进去没有"。
+        writeHighWater: highWater,
+        sinceReset: since > Math.max(baseline, highWater),
         pulled: {
           members: pull('members', 'server_at_ms, id'),
           tasks: pull('tasks', 'server_at_ms, id'),
