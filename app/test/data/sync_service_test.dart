@@ -570,5 +570,92 @@ void main() {
       expect(onB, hasLength(1));
       expect(onB.single.state, CheckinState.done);
     });
+
+    test('撤销：本地删掉的那条，推上去是显式声明，不是"推空"', () async {
+      // 这条守的是协议语义：**「我撤销了」和「我从来没有」必须分开表达**。
+      // 老版本靠"全量里没有就是删了"推断，新设备首次同步推空数组，
+      // 服务端就把另一台刚打的卡全打成墓碑，两边一起归零。
+      await SyncConfigStore(db).save(
+        const SyncConfig(
+          baseUrl: 'http://sync.test',
+          token: 'tk',
+          deviceId: 'dev1',
+          familyId: 'fam1',
+        ),
+        nowMs: now,
+      );
+      await db.into(db.members).insert(Mappers.memberToCompanion(
+        domain.Member(
+          id: 'm1',
+          name: '我',
+          sortOrder: 0,
+          createdAtMs: now,
+          updatedAtMs: now,
+        ),
+      ));
+      await db.into(db.tasks).insert(Mappers.taskToCompanion(
+        domain.Task(
+          id: 't1',
+          memberId: 'm1',
+          name: '吃药',
+          repeat: const RepeatRule(),
+          time: FixedTimesRule([LocalTime(8, 0)]),
+          course: domain.Course.none,
+          status: TaskStatus.active,
+          createdAtMs: now,
+          updatedAtMs: now,
+        ),
+      ));
+      await db.upsertCheckin(
+        domain.CheckinRecord(
+          id: 'c1',
+          taskId: 't1',
+          date: LocalDate(2025, 1, 1),
+          slotIndex: 0,
+          state: CheckinState.done,
+          doneAtMs: now,
+        ),
+        nowMs: now,
+      );
+
+      // 有打卡时：撤销声明必须是空的（本地并没有撤销过什么）
+      transport.respond = (_, _) => _ok(_emptyResponse());
+      await service.syncNow();
+      expect(transport.bodies.last!['removedCheckins'], isEmpty);
+      expect(transport.bodies.last!['checkins'], hasLength(1));
+
+      // 撤销之后：本地一条都没有，但撤销声明里必须有它
+      final cleared = await db.clearCheckin(
+        taskId: 't1',
+        date: LocalDate(2025, 1, 1),
+        slotIndex: 0,
+        today: LocalDate(2025, 1, 1),
+        nowMs: now + 1000,
+      );
+      expect(cleared, isTrue);
+      expect(await db.deletedCheckinKeys(), {'t1|2025-01-01|0'});
+
+      await service.syncNow();
+      final body = transport.bodies.last!;
+      expect(body['checkins'], isEmpty);
+      expect(body['removedCheckins'], ['t1|2025-01-01|0']);
+
+      // 撤销之后又重打卡：以"有"为准，不能再声明撤销
+      await db.upsertCheckin(
+        domain.CheckinRecord(
+          id: 'c2',
+          taskId: 't1',
+          date: LocalDate(2025, 1, 1),
+          slotIndex: 0,
+          state: CheckinState.done,
+          doneAtMs: now + 2000,
+        ),
+        nowMs: now + 2000,
+      );
+      await service.syncNow();
+      final again = transport.bodies.last!;
+      expect(again['checkins'], hasLength(1));
+      expect(again['removedCheckins'], isEmpty, reason: '既说有又说删，服务端只能二选一');
+    });
   });
 }

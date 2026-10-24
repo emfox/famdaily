@@ -381,16 +381,31 @@ function upsertCheckin(db, familyId, c, at) {
     return at;
   }
 
-  // 服务端已经有墓碑。"删得晚"就保持删除——晚于**墓碑所取代的那次写入**。
+  // 服务端已经有墓碑。**只有"确实比墓碑更新"的写入才能复活它。**
   //
-  // 这里的基准必须是 `updated_at_ms`（被删那条最后一次写入的时刻），
-  // **不是 `deleted_at_ms`，也不是"现在"**。踩过一次：原先拿
-  // `deleted_at_ms > c.updatedAtMs` 判断，结果只要墓碑是刚刚建立的，
-  // 任何稍后重新打的卡都被判成"更旧"→ 永远复活不了。
-  // 拿"现在"比更糟：B 手机离线一小时再推，它的写入永远"更旧"。
+  // 判据不能只看 `updated_at_ms`。打卡表没有 `updated_at_ms` 列 ——
+  // 客户端推上来的 `updatedAtMs` 其实是 `doneAtMs`（见
+  // `CheckinDto.fromDomain`），同一格打卡只要状态没变，这个数就一直不变。
+  // 于是"撤销 → 另一台设备带着同一条旧打卡来同步"会被判成复活：
+  // 撤销之前写入的 `updated_at_ms` == 现在推上来的 `updatedAtMs`，
+  // 边界一松（`>=` 写成 `>`，或者两边差一毫秒）就活了。
+  //
+  // 判据是"这一格**最后一次变动**在墓碑之后"，也就是取两个时间的较大者：
+  // - `updated_at_ms`：内容最后改的时刻
+  // - `deleted_at_ms`：被撤销的时刻
+  // 后者是必须的 —— 撤销发生得晚，它才算"最新的那次变动"。
+  //
+  // 反过来，墓碑时刻本身也**不能**拿来当唯一判据：早先版本用
+  // `deleted_at_ms > c.updatedAtMs`，结果墓碑一建立，任何稍后重打的卡
+  // 都是"更旧"，永远复活不了。两个都要看，取大的那个比。
+  //
+  // 另外别拿"现在"比：B 手机离线一小时再推，它的写入永远"更旧"。
   if (existing.deleted === 1) {
-    const lastWrite = existing.updated_at_ms ?? 0;
-    if (lastWrite >= c.updatedAtMs) {
+    const lastChange = Math.max(
+      existing.updated_at_ms ?? 0,
+      existing.deleted_at_ms ?? 0,
+    );
+    if (lastChange >= c.updatedAtMs) {
       return;
     }
     // 写入更晚 → 这次是"撤销之后又重新打了卡"，复活。
@@ -506,46 +521,79 @@ export function mergeCheckinState(existing, incoming) {
 }
 
 /**
- * 删除传播：客户端推的全量状态里没有这条，但服务端还活着 → 存墓碑。
+ * 撤销声明里的 key：`任务id|日期|序号`。
  *
- * 但**不能到就删**：另一台手机可能还没来得及把这条推给你。
- * 判定依据是"最后一次打卡写入时刻"和"最后一次撤销时刻"谁更晚。
- *
- * 这里有个不敢做满的地方，得说清楚：如果 B 手机离线很久，它的打卡
- * 从没到过服务端，那么 A 手机推全量时服务端会认为"这条不存在"，
- * 也就无从删除。等 B 上线推上来，这条会正常写入。所以**结果是
- * "不会丢数据"，代价是"删除可能失效"**。对这个产品来说这是对的方向。
+ * 客户端删掉一行之后就再也反推不出它的日期和槽位了（行没了），
+ * 所以只能在撤销那一刻把三元组记下来。分隔符用 `|`，和本地
+ * `AppDatabase._checkinKey` 必须一致。
  */
-function applyCheckinDeletes(db, familyId, keepKeys, deviceId, at, since) {
-  // **只对本批之前就已经存在的行做墓碑判断**（`server_at_ms <= since`）。
-  //
-  // 踩过一个大坑：这里的 `since` 用了客户端传的 `since`（也就是"我上次拉到
-  // 哪儿"），结果**只推不拉**的那种请求（`since` 为最近值）会把所有更早的
-  // 打卡全判成"客户端没有它"→ 全部打上墓碑。症状是"刚打的卡，同步一下
-  // 就没了"。把范围收窄到"本批推上来的行之前就已经在库里的那些"，
-  // 才能表达"客户端这次的全量状态里没有它"。
-  const rows = db
-    .prepare(
-      `SELECT task_id, date, slot_index, updated_at_ms FROM checkins
-        WHERE family_id = ? AND deleted = 0 AND server_at_ms <= ?`,
-    )
-    .all(familyId, since);
+function parseRemovedKey(key) {
+  if (typeof key !== 'string') return null;
+  const parts = key.split('|');
+  if (parts.length !== 3) return null;
+  const [taskId, date, slotRaw] = parts;
+  if (!taskId || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  const slotIndex = Number(slotRaw);
+  if (!Number.isInteger(slotIndex) || slotIndex < 0) return null;
+  return { taskId, date, slotIndex };
+}
 
-  const keep = keepKeys;
+/**
+ * 删除传播：客户端**明确声明撤销**的打卡 → 存墓碑。
+ *
+ * 这条规则改过一次，改动的原因值得留着。
+ *
+ * 最初的规则是"客户端推的全量状态里没有它 = 撤销"：把本批之前存在的行
+ * 全部拿来跟客户端推的集合比，缺的就打死。看着自洽，实际把
+ * 「我删了」和「我从来就没有」混成了一件事 —— 而正常使用里后者占绝对多数：
+ * 冷启动拉一次、回前台拉一次、新手机第一次同步。
+ *
+ * 端到端接真服务时抓到的就是这个：第二台手机刚配对，本地空库，
+ * 推 `checkins: []`，服务端立刻把第一台手机刚推上来的打卡打成墓碑；
+ * 第二台拉下来的是"已撤销"，而它本地本来就没有这条，于是永远没有。
+ * 日志里两条写入、零拒绝，一切"正常"。
+ *
+ * 现在的规则：只看 `removedCheckins` 里列出的 key，说删哪条删哪条，
+ * 没提的不动。客户端自己记住"我删过什么"（记在本地 `change_logs` 里）。
+ *
+ * 还留了一层保守：那一行已经不存在、或者已经是墓碑，就什么都不做 ——
+ * 不做"复活又删除"的处理，那种情况由后续正常写入的合并规则决定。
+ */
+function applyCheckinDeletes(db, familyId, removedKeys, deviceId, at) {
   let tombstoned = 0;
-  for (const r of rows) {
-    const key = `${r.task_id}\u0000${r.date}\u0000${r.slot_index}`;
-    if (keep.has(key)) continue;
+  let highest = 0;
+  for (const key of removedKeys) {
+    const parsed = parseRemovedKey(key);
+    if (parsed === null) continue;
+    const row = db
+      .prepare(
+        `SELECT updated_at_ms FROM checkins
+          WHERE family_id = ? AND task_id = ? AND date = ? AND slot_index = ?
+            AND deleted = 0`,
+      )
+      .get(familyId, parsed.taskId, parsed.date, parsed.slotIndex);
+    if (!row) continue;
     db.prepare(
       `UPDATE checkins SET deleted = 1, deleted_at_ms = ?, server_at_ms = ?
         WHERE family_id = ? AND task_id = ? AND date = ? AND slot_index = ?`,
-    ).run(at, at, familyId, r.task_id, r.date, r.slot_index);
+    ).run(at, at, familyId, parsed.taskId, parsed.date, parsed.slotIndex);
+    highest = at;
     tombstoned += 1;
   }
-  // 注意这里**不参与"本次最高水位"的计算**。墓碑的 `deleted_at_ms` 是
-  // 服务端时间，是客户端判断"删得晚不晚"的唯一依据，必须稳定。
-  // 如果每次全量推送都把它刷新一遍，那"删了又打"就永远判不成复活。
-  return tombstoned;
+  // **墓碑必须参与本次水位计算**，返回它写下去的那个 `server_at_ms`。
+  //
+  // 踩得很深：原先这里返回的是"墓碑条数"，水位完全不含墓碑 —— 理由是
+  // "`deleted_at_ms` 必须稳定，不能被每次全量推送刷新"。那个顾虑是对的，
+  // 但结论错了：墓碑的 `server_at_ms` 只在这一刻定一次，之后再也不动，
+  // 稳定性和"计入水位"根本不冲突。
+  //
+  // 不计入的后果非常隐蔽：本次请求里，写入的行拿到 `t1 < t2 < ... < tN`，
+  // 墓碑排在最后拿到 `tN`，而 `cursor = highWater = tN-1`。
+  // 客户端下次带 `since = tN-1` 来拉，条件是 `server_at_ms > since` ——
+  // **墓碑恰好落在边界上，永远拉不到**。
+  // 症状：A 撤销了一条打卡，B 那边一直显示"已完成"，看着像同步坏了，
+  // 其实是那条撤销通知卡在水位线下面。
+  return { tombstoned, highWater: highest };
 }
 
 function upsertSetting(db, familyId, s, at) {
@@ -613,7 +661,6 @@ export function createSyncHandler(deps) {
      * `server_at_ms` 都大于 `baseline`，客户端本来就要把它们落库，
      * 这次响应里也会带回去（见下面的 `pull` 的第二个条件）。
      */
-    const baseline = clock.peek();
 
     /**
      * 每行一个 `server_at_ms`。**不能整批共用一个**。
@@ -648,33 +695,71 @@ export function createSyncHandler(deps) {
     };
 
     db.exec('BEGIN IMMEDIATE');
+    /**
+     * 本次请求进来时服务端的最高 `server_at_ms`（空库为 0）。
+     *
+     * **必须在事务里、在写任何东西之前读**，而且必须从**库里**读，
+     * 不能用 `clock.peek()`。两个坑叠在一起：
+     *
+     * 1. `peek()` 是进程内存里的值，只在 `next()` 时推进。另一个进程
+     *    （测试里就是分别跑的服务端进程）往同一个库写过，它就落后了。
+     * 2. 读的时机也必须落在 `BEGIN IMMEDIATE` 之后。放在事务外，从读到
+     *    开事务之间别的请求可能已经写进去了 —— 那批数据的 `server_at_ms`
+     *    比这里读到的 `baseline` 大，就被算进"本批要拉的范围"里；
+     *    可它是在本请求的写之前就有的，`cursor` 推进到哪儿都会重复或漏。
+     *
+     * 症状是 A 撤销了打卡、B 却仍然收到"这条还在"（墓碑之后的那个值
+     * 被当成了有效写入）。
+     */
+    const baseline =
+      db
+        .prepare(
+          `SELECT max(m) AS m FROM (
+             SELECT max(server_at_ms) AS m FROM members
+             UNION ALL SELECT max(server_at_ms) FROM tasks
+             UNION ALL SELECT max(server_at_ms) FROM checkins
+             UNION ALL SELECT max(server_at_ms) FROM settings
+           )`,
+        )
+        .get()?.m ?? 0;
     try {
       // 顺序不能变：外键是 RESTRICT，先父后子。
+      //
+      // **打卡的墓碑判断必须排在三类写入之前**，理由见 `applyCheckinDeletes`：
+      // 它要拿"本批之前就已存在的行"去比对，而 `baseline` 给的边界是
+      // `server_at_ms <= baseline`；本批自己刚写进去的行 `server_at_ms`
+      // 一定大于 `baseline`。一旦顺序颠倒，本批写入的那条如果在比对时还在，
+      // 就没问题 —— 但如果**一边 upsert 一边删**（同一批里有 A 的打卡、
+      // B 又声明没有它），结果就取决于谁后跑。放在最前面，语义是
+      // "先按上一批之后的状态算清谁没了，再接收这一批的新状态"。
+      // **撤销只认显式声明。**
+      //
+      // 早先的做法是"客户端推了 checkins，凡是不在这份全量里的就算撤销"。
+      // 这个推断看起来合理，实际是错的：新设备第一次同步推 `checkins: []`
+      // （它确实一条都没有），服务端就会把另一台设备刚打的卡全打成墓碑，
+      // 而新设备拉下来看到的是"已撤销"——两边一起归零，且日志里
+      // "写入 N 行、被拒 0 条"一切正常，极难查。
+      //
+      // 「我从来没有」和「我撤销了」必须分开表达，所以协议里加了
+      // `removedCheckins`：只有列在里面的三元组才真的打墓碑。
+      //
+      // 顺序仍然必须在三类写入之前，理由见 `applyCheckinDeletes`。
+      const removedRaw = body?.removedCheckins;
+      const removed = Array.isArray(removedRaw)
+        ? removedRaw.filter((k) => typeof k === 'string')
+        : [];
+      let tombstoned = 0;
+      if (removed.length > 0) {
+        const r = applyCheckinDeletes(db, familyId, removed, device.deviceId, nextAt());
+        tombstoned = r.tombstoned;
+        if (r.highWater > highWater) highWater = r.highWater;
+      }
+
       applyEach(members, 'member', normalizeMember, (m, at) => upsertMember(db, familyId, m, at));
       applyEach(tasks, 'task', normalizeTask, (t, at) => upsertTask(db, familyId, t, at));
       applyEach(checkins, 'checkin', normalizeCheckin, (c, at) =>
         upsertCheckin(db, familyId, c, at),
       );
-
-      const keep = new Set(
-        checkins
-          .filter((c) => CHECKIN_STATES.has(c?.state))
-          .map((c) => `${c.taskId}\u0000${c.date}\u0000${c.slotIndex}`),
-      );
-      // **只有"客户端明确推了 checkins 字段"才做墓碑判断。**
-      //
-      // 这是全量推送设计里必须区分的一件事：`checkins: []` 有两种含义——
-      // 「我本地一条都没有」和「我这次只来拉数据，没打算推」。
-      // 前者是真的撤销，后者是绝大多数请求（冷启动拉一次、回前台拉一次）。
-      // 区分标志就是**这个字段在不在**，而不是它是不是空数组。
-      //
-      // 踩过一次，症状非常典型：只拉不推的请求把所有打卡全打上墓碑，
-      // 表现为"刚打的卡，切出去回来就没了"。
-      const declaresCheckins = Object.prototype.hasOwnProperty.call(body ?? {}, 'checkins');
-      const tombstoned = declaresCheckins
-        ? applyCheckinDeletes(db, familyId, keep, device.deviceId, nextAt(), baseline)
-        : 0;
-
       applyEach(settings, 'setting', normalizeSetting, (s, at) =>
         upsertSetting(db, familyId, s, at),
       );

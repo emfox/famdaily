@@ -391,12 +391,28 @@ final class SyncService {
     final taskRows = await _db.select(_db.tasks).get();
     final checkins = await _db.listAllCheckins();
     final settings = await _db.listSyncedSettings();
+    // **我撤销过哪些打卡**，只能从本地变更日志里读（见
+    // `AppDatabase.deletedCheckinKeys` 的注释：光看"本地没有"分不清
+    // "我删了"和"我从来没有"）。
+    final removed = await _db.deletedCheckinKeys();
+    // 本地现在有的那些，用同一个编码（`任务id|日期|序号`）表示，
+    // 才能和撤销集合对齐。`CheckinDto.key` 用的是 `\u0000` 分隔，
+    // 这里直接拼同一个形状，避免两套编码对不上。
+    final presentKeys = {
+      for (final c in checkins) '${c.taskId}|${c.date}|${c.slotIndex}',
+    };
 
     return SyncRequest(
       since: since,
       members: [for (final m in members) MemberDto.fromDomain(m)],
       tasks: [for (final row in taskRows) _taskDto(row)],
       checkins: [for (final c in checkins) CheckinDto.fromDomain(c)],
+      // 推上去的那条如果同时也在撤销集合里，说明撤销之后又打过卡 ——
+      // 以"有"为准，不能既说它有又说要删。
+      removedCheckins: [
+        for (final k in removed)
+          if (!presentKeys.contains(k)) k,
+      ],
       settings: settings.values.toList(),
     );
   }

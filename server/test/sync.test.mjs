@@ -320,7 +320,52 @@ test('改得晚于删 → 复活；删得晚于改 → 保持删', async (t) => 
   assert.equal(pull.json.pulled.members[0].name, '爸爸（改名）', '旧编辑不该覆盖新行');
 });
 
-test('推全量：客户端没推的打卡 → 存墓碑，且墓碑会被拉下去', async (t) => {
+test('新设备推空 checkins 不会把别人的打卡删掉', async (t) => {
+  // 这条是端到端接真服务时抓到的，症状极典型：
+  //
+  // 第二台手机刚配对，本地空库，首次同步推 `checkins: []`。老规则是
+  // "推了 checkins 就按全量比对，缺的算撤销"，于是服务端把第一台手机
+  // 刚推上来的打卡全打成墓碑；第二台拉下来看到的是"已撤销"，而它本地
+  // 本来就没有这条 —— 两边一起归零。日志里两条写入、零拒绝，一切"正常"。
+  //
+  // 「我从来没有」和「我撤销了」必须分开表达。现在的规则是只看
+  // `removedCheckins`；空 checkins 就是没东西要推，不动服务端。
+  const srv = await startServer();
+  t.after(() => srv.close());
+  const { token } = await pairDevice(srv);
+
+  const first = await srv.call('POST', '/sync', {
+    token,
+    body: {
+      members: [member('m1', '爸爸')],
+      tasks: [task('t1', 'm1', '吃药')],
+      checkins: [checkin('t1', '2025-04-01', 0, 'done', 1000)],
+    },
+  });
+  assert.equal(first.status, 200);
+  assert.equal(first.json.tombstoned, 0);
+  assert.equal(first.json.pulled.checkins.length, 1);
+  assert.equal(first.json.pulled.checkins[0].deleted, 0);
+
+  // 第二台设备配对进来，首次同步只推空数组
+  const extra = await srv.call('POST', '/pair/code', { token });
+  const second = await srv.call('POST', '/pair/claim', {
+    body: { code: extra.json.code, deviceLabel: 'B' },
+  });
+  const empty = await srv.call('POST', '/sync', {
+    token: second.json.token,
+    body: { checkins: [] },
+  });
+  assert.equal(empty.json.tombstoned, 0, '空 checkins 不是撤销声明');
+  assert.equal(empty.json.pulled.checkins.length, 1, 'B 应当拉到 A 那条打卡');
+  assert.equal(empty.json.pulled.checkins[0].deleted, 0, '另一台手机上必须是有效的打卡');
+
+  // 存档里也仍然是活的
+  const pull = await srv.call('POST', '/sync', { token, body: { since: 0 } });
+  assert.equal(pull.json.pulled.checkins[0].deleted, 0);
+});
+
+test('显式声明撤销 → 存墓碑，且墓碑会被拉下去', async (t) => {
   const srv = await startServer();
   t.after(() => srv.close());
   const { token } = await pairDevice(srv);
@@ -337,21 +382,77 @@ test('推全量：客户端没推的打卡 → 存墓碑，且墓碑会被拉下
     },
   });
 
-  // 第二次全量只推一条：另一条等于"撤销了"
+  // 第二次显式声明撤销 03-02
   const r = await srv.call('POST', '/sync', {
     token,
     body: {
       members: [member('m1', '爸爸')],
       tasks: [task('t1', 'm1', '吃药')],
       checkins: [checkin('t1', '2025-03-01', 0, 'done', 1000)],
+      removedCheckins: ['t1|2025-03-02|0'],
     },
   });
   assert.equal(r.json.tombstoned, 1);
+  assert.deepEqual(r.json.rejected, []);
 
   const pull = await srv.call('POST', '/sync', { token, body: { since: 0 } });
   const tomb = pull.json.pulled.checkins.find((c) => c.date === '2025-03-02');
   assert.equal(tomb.deleted, 1);
   assert.ok(tomb.deleted_at_ms > 0, '墓碑要带时间，否则对端无法判断"删得晚不晚"');
+});
+
+test('墓碑要进水位：下一次带 since 来的设备必须拉到它', async (t) => {
+  // 这条守的漏洞非常隐蔽，端到端接真服务才暴露出来：
+  // 同一批里写入的行拿到 t1..tN，墓碑排在最后拿到 tN；
+  // 如果 `cursor` 只算写入、不算墓碑，客户端下次带 `since = tN-1` 来拉，
+  // 条件是 `server_at_ms > since`，**墓碑正好卡在边界上，永远拉不到**。
+  // 表现：一台手机撤销了打卡，另一台一直显示"已完成"。
+  const srv = await startServer();
+  t.after(() => srv.close());
+  const { token } = await pairDevice(srv);
+
+  await srv.call('POST', '/sync', {
+    token,
+    body: {
+      members: [member('m1', '爸爸')],
+      tasks: [task('t1', 'm1', '吃药')],
+      checkins: [
+        checkin('t1', '2025-05-01', 0, 'done', 1000),
+        checkin('t1', '2025-05-02', 0, 'done', 1000),
+      ],
+    },
+  });
+
+  // 第二台设备先拉全量，拿到它自己的水位
+  const extra = await srv.call('POST', '/pair/code', { token });
+  const b = await srv.call('POST', '/pair/claim', {
+    body: { code: extra.json.code, deviceLabel: 'B' },
+  });
+  const initial = await srv.call('POST', '/sync', { token: b.json.token, body: {} });
+  const sinceB = initial.json.cursor;
+  assert.equal(initial.json.pulled.checkins.length, 2);
+
+  // A 撤销 05-02（显式声明）
+  const revoked = await srv.call('POST', '/sync', {
+    token,
+    body: {
+      members: [member('m1', '爸爸')],
+      tasks: [task('t1', 'm1', '吃药')],
+      checkins: [checkin('t1', '2025-05-01', 0, 'done', 1000)],
+      removedCheckins: ['t1|2025-05-02|0'],
+    },
+  });
+  assert.equal(revoked.json.tombstoned, 1);
+  assert.ok(revoked.json.cursor > sinceB, 'cursor 应当覆盖到墓碑');
+
+  // B 用上次的水位来拉，必须能看到那条墓碑
+  const delta = await srv.call('POST', '/sync', {
+    token: b.json.token,
+    body: { since: sinceB },
+  });
+  const tomb = delta.json.pulled.checkins.find((c) => c.date === '2025-05-02');
+  assert.ok(tomb, `B 没拉到撤销通知；返回了 ${JSON.stringify(delta.json.pulled.checkins)}`);
+  assert.equal(tomb.deleted, 1);
 });
 
 test('打卡合并规则：逐格覆盖 mergeCheckinState', () => {
@@ -411,8 +512,11 @@ test('反方向：撤销后又重新打卡 → 墓碑被复活', async (t) => {
     token,
     body: { ...base, checkins: [checkin('t1', '2025-03-01', 0, 'done', 1000)] },
   });
-  // 撤销：全量里没有它
-  await srv.call('POST', '/sync', { token, body: { ...base, checkins: [] } });
+  // 撤销：显式声明
+  await srv.call('POST', '/sync', {
+    token,
+    body: { ...base, checkins: [], removedCheckins: ['t1|2025-03-01|0'] },
+  });
   let pull = await srv.call('POST', '/sync', { token, body: { since: 0 } });
   assert.equal(pull.json.pulled.checkins[0].deleted, 1);
 
@@ -426,6 +530,48 @@ test('反方向：撤销后又重新打卡 → 墓碑被复活', async (t) => {
   pull = await srv.call('POST', '/sync', { token, body: { since: 0 } });
   assert.equal(pull.json.pulled.checkins[0].deleted, 0, '删得早于改 → 复活');
   assert.equal(pull.json.pulled.checkins[0].state, 'done');
+});
+
+test('撤销之后，另一台带同一条旧打卡来同步 → 不能复活', async (t) => {
+  // 端到端抓到的，非常隐蔽：
+  //
+  // 打卡表没有 `updated_at_ms` 列，客户端推上来的 `updatedAtMs` 其实是
+  // `doneAtMs` —— 同一格打卡只要状态没变，这个数**一直不变**。
+  // 撤销发生之后，另一台设备（本地还留着这条）来同步，推的还是那个
+  // 老的 `updatedAtMs`。如果复活判据只看 `updated_at_ms` 且边界写松了，
+  // 这一推就把墓碑翻回"有效"，于是：
+  //
+  //   A 撤销 → 服务端墓碑 → A 下一轮同步把墓碑拉回去 → 判据放行 → 复活
+  //
+  // 症状是"撤销了，过一会儿自己又回来了"，而且越同步越确定。
+  // 判据必须取 `max(updated_at_ms, deleted_at_ms)`：撤销是最后一次变动。
+  const srv = await startServer();
+  t.after(() => srv.close());
+  const { token } = await pairDevice(srv);
+
+  const base = {
+    members: [member('m1', '爸爸')],
+    tasks: [task('t1', 'm1', '吃药')],
+  };
+  const old = checkin('t1', '2025-06-01', 0, 'done', 1000);
+  await srv.call('POST', '/sync', { token, body: { ...base, checkins: [old] } });
+
+  // 撤销
+  await srv.call('POST', '/sync', {
+    token,
+    body: { ...base, checkins: [], removedCheckins: ['t1|2025-06-01|0'] },
+  });
+
+  // 另一台设备带着**同一个** doneAtMs 来同步（它本地还留着这条）
+  const again = await srv.call('POST', '/sync', {
+    token,
+    body: { ...base, checkins: [old] },
+  });
+  const pulled = again.json.pulled.checkins.find((c) => c.date === '2025-06-01');
+  assert.equal(pulled.deleted, 1, '撤销必须站得住，不能被同一条旧打卡翻回来');
+
+  const pull = await srv.call('POST', '/sync', { token, body: { since: 0 } });
+  assert.equal(pull.json.pulled.checkins[0].deleted, 1);
 });
 
 test('没有变化的重复推送不刷新 server_at_ms（否则对端永远在拉同样的数据）', async (t) => {

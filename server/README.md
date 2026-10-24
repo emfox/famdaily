@@ -37,6 +37,7 @@ FAMDAILY_PAIR_SECRET='自己定一个长口令' PORT=8787 node index.mjs
 | GET | `/health` | 无 | 存活探针。返回 `families`/`cursor`/`pairEnabled` |
 | POST | `/pair/new` | `X-Pair-Secret` | 建家庭，发一次性同步码（10 分钟有效） |
 | GET | `/pair/:code` | 码即凭据 | 配对前预览成员名 |
+| POST | `/pair/code` | Bearer | **给已有家庭再发一个同步码**（第二台手机接进同一个家）。每个家庭同时最多 5 个有效码，超了挤掉最老的 |
 | POST | `/pair/claim` | 同步码 | 码换长期 token，码即刻作废 |
 | POST | `/pair/rotate` | Bearer | 轮换 token，**其他设备全部失效**（手机丢了用这个） |
 | POST | `/sync` | Bearer | 推全量 + 拉增量，一个往返 |
@@ -76,3 +77,51 @@ node --test "test/*.test.mjs"
 测试**打真的 HTTP**：`startServer()` 在 127.0.0.1 的随机端口起真服务，
 走真 TCP、真 JSON，不 mock `node:http`、不 mock 数据库。
 每个用例慢几毫秒，换来"测试全绿、真机不行"这类问题不会从这一层漏过去。
+
+## 发布到沙箱
+
+服务发布之后才有一个手机能填的 `https://` 地址。发布要点：
+
+1. **入口** `index.mjs`，端口读 `PORT`（发布时平台会注入）。
+2. **必须配 `FAMDAILY_PAIR_SECRET`**。不配的话 `/pair/new` 会拒绝，
+   表现是"第一台手机加不进来"。已经配过对的设备不受影响。
+3. **数据库路径要指向持久卷**。`FAMDAILY_DB=/data/famdaily.db` 这种。
+   默认值按 `index.mjs` 的位置算，发布目录一变就换地方——"发布之后
+   数据全空"一半是这么来的。
+4. `GET /health` 返回 `{"ok":true,...}` 才算活。
+
+沙箱休眠期间服务不可达，App 会静默退避重试（30s→1m→3m→10m→30m）。
+**这不是故障**，本地库一直是完整可用的。
+
+## 手机端怎么连
+
+App → 设置 → 家人的手机 → 多台手机同步：
+
+| 角色 | 做什么 |
+|---|---|
+| 第一台（已有数据） | 填服务地址 → 「生成同步码」需要 `X-Pair-Secret`，**目前没有 UI**，用 curl 调 `/pair/new` |
+| 其他手机 | 填同一个服务地址 → 输入同步码 → 看到成员名 → 确认 |
+
+> ⚠️ **第一台手机目前还不能从界面开启同步。** 这一阶段做到"协议 + 客户端
+> 能正确地推和拉"，"谁有资格建家庭"这件事按设计要过 `X-Pair-Secret`，
+> 而它不该让手机去存。下一阶段接网页端时由网页后台发码，手机只管输入。
+> 在那之前，第一台设备加进来要手工 curl 一次：
+>
+> ```bash
+> curl -s -X POST https://<域名>/pair/new \
+>   -H "X-Pair-Secret: $FAMDAILY_PAIR_SECRET" \
+>   -H 'Content-Type: application/json' -d '{"familyName":"我们家"}'
+> # → {"code":"FAM-XXXX-XXXX-XXXX", "expiresAtMs":...}
+> ```
+>
+> 拿到码之后，**这台手机也走"输入同步码"这条路**——自己的码自己输，
+> 不需要额外的代码路径。
+>
+> 第二台及以后的手机**不要**再调 `/pair/new`（那会另建一个家庭，
+> 两台手机落在两个家里，永远拉不到对方的数据）。用自己的 token 向
+> 自己家再要一个码：
+>
+> ```bash
+> curl -s -X POST https://<域名>/pair/code -H "Authorization: Bearer <第一台的 token>"
+> # → {"code":"FAM-XXXX-XXXX-XXXX", "familyId":"...", "expiresAtMs":...}
+> ```

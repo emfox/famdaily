@@ -240,6 +240,78 @@ export function handlePairClaim(ctx, deps) {
 }
 
 /**
+ * `POST /pair/code`：**已配对**的设备给自己家再要一个同步码，接第二台手机。
+ *
+ * 这个接口不是补充，是补漏。没有它，配对就是死路一条：
+ * `/pair/new` 每次调用都建一个**新家庭**，而它发出来的码是一次性的 ——
+ * 也就是说"妈妈把自己手机接进来"根本无路可走。唯一的绕法是
+ * 「用 A 的 token 调 `/pair/rotate`」，可那会把 A 自己踢下线，
+ * 一家人轮流上线，等于没有同步。
+ *
+ * 为什么不要 `X-Pair-Secret`：拿得到本机 token 就等于已经是这个家的人，
+ * 家里多接一台自己的手机不需要再敲一遍服务器口令（那个口令的存在是为了
+ * 防止外人凭空建家庭占磁盘，不该变成家里的日常操作）。
+ *
+ * 代价说清楚：本机 token 泄露 = 对方能给自己开新设备。但那种情况下
+ * 对方本来就能直接 `POST /sync` 读写全部数据，多开一台设备不是新增的损失。
+ * 真正丢了手机的处理办法仍然是 `/pair/rotate` —— 它会把这个码可能签出的
+ * 设备一并作废。
+ */
+export function handlePairCode(ctx, deps) {
+  const { db, clock, limiters } = deps;
+  const { req, device } = ctx;
+  if (!device) {
+    throw new HttpError(401, 'unauthorized', '需要先配对');
+  }
+  assertAllowed(limiters.pairNew.hit(req.socket?.remoteAddress ?? 'unknown'));
+
+  const now = Date.now();
+  const code = generatePairCode();
+
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    // 与自己家的旧码互不干扰：只清掉已用/已过期的，有效的留着
+    // （用户可能同时在给两台手机发码）。
+    db.prepare(
+      'DELETE FROM pair_codes WHERE family_id = ? AND (claimed_at_ms IS NOT NULL OR expires_at_ms <= ?)',
+    ).run(device.familyId, now);
+
+    const live = db
+      .prepare('SELECT count(*) AS n FROM pair_codes WHERE family_id = ?')
+      .get(device.familyId).n;
+    // 上限满了就把**最老的**有效码挤掉，而不是拒绝发新码：
+    // 用户眼前的动作是"再要一个码"，回一句"码太多了"没有任何出路。
+    if (live >= MAX_LIVE_CODES) {
+      db.prepare(
+        `DELETE FROM pair_codes WHERE code_hash = (
+           SELECT code_hash FROM pair_codes WHERE family_id = ?
+            ORDER BY created_at_ms ASC LIMIT 1)`,
+      ).run(device.familyId);
+    }
+
+    db.prepare(
+      'INSERT INTO pair_codes (code_hash, family_id, created_at_ms, expires_at_ms) VALUES (?, ?, ?, ?)',
+    ).run(hashPairCode(code), device.familyId, now, now + PAIR_CODE_TTL_MS);
+    db.exec('COMMIT');
+  } catch (err) {
+    try {
+      db.exec('ROLLBACK');
+    } catch {
+      // 已回滚
+    }
+    throw err;
+  }
+
+  return {
+    ok: true,
+    code,
+    familyId: device.familyId,
+    expiresAtMs: now + PAIR_CODE_TTL_MS,
+    clock: clock.peek(),
+  };
+}
+
+/**
  * `POST /pair/rotate`：轮换 token，旧的全部失效。
  *
  * "手机丢了"的应急出口。**旧 token 全失效**而不是只加一个：

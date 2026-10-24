@@ -366,7 +366,19 @@ class AppDatabase extends _$AppDatabase {
       } else {
         await into(checkins).insert(Mappers.checkinToCompanion(c, nowMs));
       }
-      await _log('checkin', c.id, 'upsert', nowMs);
+      // **同一格打卡，日志里记三元组，不记行 id。**
+      //
+      // 同步推的是三元组（`任务id|日期|序号`），撤销声明也是三元组。
+      // 日志里留行 id，`change_log` 就成了"同步看不懂的凭据"：
+      // 撤销那条日志（[clearCheckin]）本来就是三元组，两种形状混在一列里，
+      // 读的人还得先猜是哪一种。统一成三元组，`deletedCheckinKeys`
+      // 才能只按 `op = 'delete'` 过滤，不必再区分编码。
+      await _log(
+        'checkin',
+        _checkinKey(c.taskId, c.date, c.slotIndex),
+        'upsert',
+        nowMs,
+      );
     });
   }
 
@@ -393,7 +405,13 @@ class AppDatabase extends _$AppDatabase {
         return;
       }
       await (delete(checkins)..where((t) => t.id.equals(row.id))).go();
-      await _log('checkin', row.id, 'delete', nowMs);
+      // 日志的 `entity_id` 存**三元组**而不是行 id。
+      //
+      // 行 id 一到删除之后就再也反推不出"哪一天、哪个槽位"了 —— 行没了，
+      // 表格里查不到。而同步恰恰只需要三元组：协议里打卡的身份就是它。
+      // 这条日志是"我撤销过这条"的唯一凭据（见 [deletedCheckinKeys]），
+      // 存行 id 等于把凭据变成一串没用过的字节。
+      await _log('checkin', _checkinKey(taskId, date, slotIndex), 'delete', nowMs);
     });
     return true;
   }
@@ -525,6 +543,44 @@ class AppDatabase extends _$AppDatabase {
     final row = await (selectOnly(changeLogs)..addColumns([count])).getSingle();
     return row.read(count) ?? 0;
   }
+
+  /// **我撤销过的打卡**，给同步用。
+  ///
+  /// 为什么需要它：协议里「客户端推的全量 checkins 里没有某条」= 「这条被撤销」。
+  /// 但「我本地没有」有两种完全不同的来源：
+  ///
+  /// 1. **我真的撤销过它** —— 要告诉服务端"删掉"。
+  /// 2. **我从来就没有过它** —— 新装的手机、刚配对进来的第二台手机，
+  ///    本地空库，什么都不该声明。
+  ///
+  /// 分不清这两种，第二台手机第一次同步就会把全家人的打卡全判成"撤销"。
+  /// 端到端接真服务时正是这样：B 首次同步发 `checkins: []`，服务端把 A
+  /// 刚推上来那条打成墓碑；B 拉下来的是"已撤销"，而本地本来就没有，
+  /// 于是 B 上永远没有这条打卡 —— 日志里却一切正常：两条写入、零拒绝。
+  ///
+  /// 判据是 `change_logs` 里 `checkin/delete` 记录的 `entity_id`。
+  /// 那个字段在 [clearCheckin] 里存的是 `任务id|日期|序号`（见那边的注释），
+  /// 正好是协议里打卡的身份三元组 —— 行 id 在删除后就再也反推不出日期了。
+  ///
+  /// 撤销之后又打了卡的情形由调用方处理：服务端按"删得晚不晚"判复活，
+  /// 这条 key 同时出现在"推上去的行"和"撤销声明"里时，[SyncRequest]
+  /// 只把它当"推上去"，不会重复声明。这里直接返回全部，不做二次过滤，
+  /// 因为"撤销过又打了"的那条本来就应该让对端知道"我这边这份是最新的"。
+  Future<Set<String>> deletedCheckinKeys() async {
+    final logs = await (select(changeLogs)
+          ..where(
+            (t) => t.entity.equals('checkin') & t.op.equals('delete'),
+          ))
+        .get();
+    return {for (final l in logs) l.entityId};
+  }
+
+  /// 打卡的身份三元组，编码成 `任务id|日期|序号`。
+  ///
+  /// 协议里的打卡**没有 id**，身份就是这三个字段（见 `docs/sync-protocol.zh_CN.md`）。
+  /// 本地撤销时靠它留凭据：行删了，只有这个串还能说出"删的是哪一条"。
+  static String _checkinKey(String taskId, LocalDate date, int slotIndex) =>
+      '$taskId|$date|$slotIndex';
 
   // ---------------------------------------------------------------------
   // 同步（P3）

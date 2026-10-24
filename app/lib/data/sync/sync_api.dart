@@ -62,11 +62,18 @@ final class HttpSyncTransport implements SyncTransport {
     this.connectTimeout = const Duration(seconds: 5),
     this.totalTimeout = const Duration(seconds: 15),
     HttpClient? client,
-  }) : _client = client ?? HttpClient();
+  }) : _injected = client;
 
   final Duration connectTimeout;
   final Duration totalTimeout;
-  final HttpClient _client;
+
+  /// 外部注入的客户端。**注入的不会被 `close()` 关掉**——调用方可能还有
+  /// 别的地方在用它。
+  final HttpClient? _injected;
+
+  /// 自己造的那个。**每次请求换一个新的**，用完立刻关（原因见 `_send`）。
+  /// 存成字段只是为了 `close()` 能兜底关掉最后一个。
+  HttpClient? _own;
 
   @override
   Future<HttpResponseData> post(
@@ -85,8 +92,18 @@ final class HttpSyncTransport implements SyncTransport {
     required Map<String, String> headers,
     String? body,
   }) async {
+    // 每次请求一个**新的**连接池：同步是低频操作（几分钟一次），复用省不了
+    // 什么，却会在沙箱休眠后留下一个僵死的 keep-alive 连接 —— 下次请求
+    // 直接超时，而重试才会好。这个 bug 极难归因。
+    //
+    // 同理**不能在这里 close 注入进来的那个**：调用方可能还在用它做别的
+    // 事，关掉之后下一次 `openUrl` 会抛 "Client is closed"，而报错位置
+    // 离真正的原因隔着好几层。踩过。
+    final client = _injected ?? HttpClient();
+    _own = _injected == null ? client : _own;
+
     Future<HttpResponseData> run() async {
-      final req = await _client.openUrl(method, url);
+      final req = await client.openUrl(method, url);
       req.followRedirects = false;
       headers.forEach(req.headers.set);
       if (body != null) {
@@ -122,15 +139,20 @@ final class HttpSyncTransport implements SyncTransport {
     } on HttpException catch (e) {
       throw TransportException('HTTP 出错：${e.message}');
     } finally {
-      // 每次请求新建连接：同步是低频操作（几分钟一次），连接复用省不了
-      // 什么，却会在沙箱休眠后留下一个僵死的 keep-alive 连接 —— 下次
-      // 请求直接超时，而重试才会好。这个 bug 极难归因。
-      _client.close(force: true);
+      if (_injected == null) {
+        client.close(force: true);
+      }
     }
   }
 
   @override
-  void close() => _client.close(force: true);
+  void close() {
+    // 注入的那个不归我们关。
+    if (_injected == null) {
+      _own?.close(force: true);
+      _own = null;
+    }
+  }
 }
 
 /// 打服务端的门面：拼 URL、带 token、把 HTTP 错误码翻译成失败分类。

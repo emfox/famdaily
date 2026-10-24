@@ -16,6 +16,7 @@ import {
   handlePairPreview,
   handlePairClaim,
   handlePairRotate,
+  handlePairCode,
   resolveDevice,
 } from './src/pair.mjs';
 import { createSyncHandler } from './src/sync.mjs';
@@ -89,6 +90,12 @@ export function createApp({
 
     // 先解析再鉴权：`/sync` / `rotate` 都是 Bearer 接口，客户端发的 JSON
     // 有问题时要报 400 而不是 401 —— 401 会把"字段写错了"误导成"配对丢了"。
+    'POST /pair/code': async (ctx) => {
+      ctx.body = await readJson(ctx.req);
+      authed((c) => {
+        sendJson(c.res, 200, handlePairCode(c, deps));
+      })(ctx);
+    },
     'POST /pair/rotate': async (ctx) => {
       ctx.body = await readJson(ctx.req);
       authed((c) => {

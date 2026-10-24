@@ -134,6 +134,62 @@ void main() {
     });
   });
 
+  group('同一个 transport 连发两次', () {
+    // 这条是从真机上逮回来的：早先每发一次请求就在 finally 里
+    // `_client.close(force: true)`，于是**第二次请求必然抛
+    // "Client is closed"**。测试里每例都新建 transport，把这个洞盖住了。
+    // 现在的规则：自建的客户端每次请求换一个；外部注入的不关（不是我们的）。
+    test('连发三次都通（自建客户端）', () async {
+      server.body = {
+        'ok': true,
+        'cursor': 1,
+        'writeHighWater': 0,
+        'sinceReset': false,
+        'pulled': <String, Object?>{
+          'members': <Object?>[],
+          'tasks': <Object?>[],
+          'checkins': <Object?>[],
+          'settings': <Object?>[],
+        },
+        'rejected': <Object?>[],
+      };
+      for (var i = 0; i < 3; i++) {
+        final r = await api.sync(
+          token: 't',
+          request: const SyncRequest(since: 0, checkins: []),
+        );
+        expect(r.cursor, 1);
+      }
+    });
+
+    test('注入的 HttpClient 不会被 close 掉', () async {
+      final injected = HttpClient();
+      addTearDown(() => injected.close(force: true));
+      final t = HttpSyncTransport(client: injected);
+      final a = SyncApi(transport: t, baseUrl: Uri.parse(server.baseUrl));
+      server.body = {
+        'ok': true,
+        'cursor': 1,
+        'pulled': <String, Object?>{
+          'members': <Object?>[],
+          'tasks': <Object?>[],
+          'checkins': <Object?>[],
+          'settings': <Object?>[],
+        },
+      };
+      await a.sync(
+        token: 't',
+        request: const SyncRequest(since: 0, checkins: []),
+      );
+      a.close();
+      // close 之后这个注入的客户端仍然可用（调用方可能还要用）
+      final req = await injected.getUrl(Uri.parse(server.baseUrl));
+      final resp = await req.close();
+      expect(resp.statusCode, 200);
+      t.close();
+    });
+  });
+
   group('错误分类', () {
     test('401 → SyncAuthException（不重试）', () async {
       server.status = 401;

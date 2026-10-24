@@ -174,7 +174,19 @@ export function createServerClock(db) {
   return {
     next() {
       const now = Date.now();
-      last = now > last ? now : last + 1;
+      // **必须严格大于 `last`**，不能是 `>=`。
+      //
+      // 守卫条件以前写的是 `now > last ? now : last + 1`，看起来没问题，
+      // 但它把"同一毫秒内还有别人写"这件事漏掉了：本进程发一个号给 A，
+      // 另一个进程（或另一个服务实例指向同一个库）在同一毫秒自己写了
+      // `server_at_ms = now`，本进程的 `last` 根本不知道。
+      // 结果是两行拿到同一个时间戳，而拉取条件是 `server_at_ms > since` ——
+      // 同号的第二行永远拉不到。
+      //
+      // 踩到的正是这个：端到端测试跑在测试进程里，服务端在另一个进程，
+      // 客户端在"同一毫秒"推上来的行与服务端自己 next() 出来的墓碑撞号，
+      // 症状是"打了个卡，另一台手机拉下来是已撤销"。
+      last = now > last + 1 ? now : last + 1;
       return last;
     },
     peek() {

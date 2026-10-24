@@ -404,6 +404,7 @@ final class SyncRequest {
     this.members = const [],
     this.tasks = const [],
     this.checkins,
+    this.removedCheckins = const [],
     this.settings = const [],
   });
 
@@ -411,14 +412,21 @@ final class SyncRequest {
   final List<MemberDto> members;
   final List<TaskDto> tasks;
 
-  /// **`null` 和不等于 `[]`**。
+  /// 本地**现在有**的打卡。
   ///
-  /// `null` = "这次只来拉数据，别动服务端的打卡"。
-  /// `[]` = "我本地一条打卡都没有"（真的撤销）。
-  ///
-  /// 服务端靠"这个字段在不在"区分这两件事。搞混的话，冷启动拉一次就会
-  /// 把所有打卡打成墓碑 —— 症状是"刚打的卡，切出去回来就没了"。
+  /// `null` = "这次只来拉数据，别动服务端的打卡"（冷启动、回前台那一次）。
+  /// 非 null = "这就是我这边全部的打卡"；服务端据此做墓碑判断。
   final List<CheckinDto>? checkins;
+
+  /// 本地**明确撤销过**的打卡，`任务id|日期|序号`。
+  ///
+  /// 为什么不能只靠"我推的全量里没有它"：那会把"从来没有"也当成"撤销"。
+  /// 第二台手机刚配对进来时本地是空库，只推 `checkins: []`，服务端会把
+  /// 全家人的打卡全判成撤销 —— 端到端接真服务时抓到的就是这个。
+  ///
+  /// 服务端只对**这里列出的**打卡做墓碑判断（协议 §4.3）。空数组表示
+  /// "我这次没有要撤销的"，不是"我要撤销全部"。
+  final List<String> removedCheckins;
 
   final List<SettingDto> settings;
 
@@ -431,6 +439,10 @@ final class SyncRequest {
     final c = checkins;
     if (c != null) {
       map['checkins'] = [for (final x in c) x.toWire()];
+      // 撤销声明和 checkins **同时出现**：服务端只有在能对比"你推了什么"
+      // 和"你声明删了什么"时才知道该保留哪条。只发撤销不发全量，
+      // 服务端没法判断对端是不是已经改了这条。
+      map['removedCheckins'] = removedCheckins;
     }
     map['settings'] = [for (final s in settings) s.toWire()];
     return map;
