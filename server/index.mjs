@@ -21,6 +21,14 @@ import {
 } from './src/pair.mjs';
 import { createSyncHandler } from './src/sync.mjs';
 import { handleMemberLink, handleMemberUnlink } from './src/web_link.mjs';
+import { handleToday, handleCheckin } from './src/web_api.mjs';
+import {
+  WEB_TICKET_TTL_MS,
+  buildClearCookie,
+  buildSetCookie,
+  isHttps,
+  resolveWebIdentity,
+} from './src/web_auth.mjs';
 
 /**
  * 数据库路径**必须是绝对路径**。
@@ -58,6 +66,34 @@ export function createApp({
     ctx.device = resolveDevice(db, token);
     if (!ctx.device && !handler.allowAnonymous) {
       throw new HttpError(401, 'unauthorized', '配对已失效，请重新配对');
+    }
+    return handler(ctx);
+  };
+
+  /**
+   * 成员页的鉴权：Cookie 里的 ticket 优先，`?t=` 兜底。
+   *
+   * 两种凭据**互不通用**（见 `web_auth.mjs` 的"两套凭据硬隔离"），
+   * 所以这里不碰 `resolveDevice`，也不碰 Authorization 头。
+   */
+  const memberAuthed = (handler) => (ctx) => {
+    const { identity, freshTicket } = resolveWebIdentity(
+      db,
+      ctx.req,
+      ctx.url.searchParams.get('t'),
+      Date.now(),
+    );
+    ctx.identity = identity;
+    if (freshTicket) {
+      // Cookie 要在这里落，否则下一次请求又得靠 URL。
+      ctx.res.setHeader(
+        'set-cookie',
+        buildSetCookie({
+          ticket: freshTicket.ticket,
+          maxAgeSec: Math.floor((freshTicket.expiresAtMs - Date.now()) / 1000),
+          secure: isHttps(ctx.req),
+        }),
+      );
     }
     return handler(ctx);
   };
@@ -124,6 +160,58 @@ export function createApp({
       authed((c) => {
         sendJson(c.res, 200, handleMemberUnlink(c, deps));
       })(ctx);
+    },
+
+    // ---- 成员页（走 URL token / Cookie，不走 Bearer）----
+    //
+    // `/m/api/*` 用 `memberAuthed`：它认 Cookie 里的 ticket，也认 `?t=`
+    // （用于"链接第一次打开、Cookie 还没落地"的极端情况）。
+    'GET /m/api/today': (ctx) => {
+      memberAuthed((c) => {
+        sendJson(c.res, 200, handleToday(c, deps));
+      })(ctx);
+    },
+    'POST /m/api/checkin': async (ctx) => {
+      ctx.body = await readJson(ctx.req);
+      memberAuthed((c) => {
+        sendJson(c.res, 200, handleCheckin(c, deps));
+      })(ctx);
+    },
+
+    // 成员页入口：`/m/<token>`。
+    //
+    // 拿到 token 就换票、落 Cookie，然后**重定向到不带 token 的地址**。
+    // 为什么非要重定向：地址栏里留着 token，用户复制页面地址/截图时
+    // 就把它一起带走了。洗一次之后地址栏只剩 `/m/`，靠 Cookie 认人。
+    // 用 302 不用 301：301 会被浏览器永久缓存，"作废链接"之后就再也改不回来了。
+    'GET /m/:token': (ctx) => {
+      const { identity, freshTicket } = resolveWebIdentity(
+        db,
+        ctx.req,
+        ctx.params.token,
+        Date.now(),
+      );
+      if (!identity) {
+        // 不区分"不存在"和"已作废"，见 web_auth.mjs 的说明。
+        sendJson(ctx.res, 401, {
+          ok: false,
+          error: {
+            code: 'no_identity',
+            message: '这个链接无效或已作废，请让家里人重新发一个给你',
+          },
+        });
+        return;
+      }
+      const headers = { location: '/m/' };
+      if (freshTicket) {
+        headers['set-cookie'] = buildSetCookie({
+          ticket: freshTicket.ticket,
+          maxAgeSec: Math.floor((freshTicket.expiresAtMs - Date.now()) / 1000),
+          secure: isHttps(ctx.req),
+        });
+      }
+      ctx.res.writeHead(302, headers);
+      ctx.res.end();
     },
   };
 
