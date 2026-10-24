@@ -37,6 +37,7 @@
 | [docs/sync-protocol.zh_CN.md](docs/sync-protocol.zh_CN.md) | **同步协议**：接口、两个水位、合并规则、已知缺陷 |
 | [docs/sync-manual-test.zh_CN.md](docs/sync-manual-test.zh_CN.md) | 同步的真机验证清单（每条都写了"判失败的样子"） |
 | [docs/web-member-page.zh_CN.md](docs/web-member-page.zh_CN.md) | **成员打卡页**：三个关键决策、路由与静态层怎么共存、安全边界、10 条手工验证 |
+| [docs/member-link-management.zh_CN.md](docs/member-link-management.zh_CN.md) | **成员链接管理**：作废链接的界面状态机、逐条行为断言、反向验证 |
 
 ## 计划
 
@@ -87,14 +88,15 @@
 | P3 网页端 · 成员打卡页（原生 JS + 纯函数逻辑层） | ✅ |
 | P3 网页端（成员打卡页、App 发链接入口） | ✅ |
 | P3 备份出口（`GET /export` + App「从云端导出」） | ✅ |
+| P3 成员链接作废（界面状态机 + `revoked` 语义透传） | ✅ |
 
-**753 个单元/组件测试 + 5 个端到端集成测试全绿，服务端 200 条，网页端 157 条，`flutter analyze` 零问题。**
+**770 个单元/组件测试 + 5 个端到端集成测试全绿，服务端 200 条，网页端 157 条，`flutter analyze` 零问题。**
 
 两套测试跑的是两件不同的事：
 
 | 层 | 命令 | 测什么 |
 |---|---|---|
-| 单元 + Widget | `./tool/test.sh` | 753 条。页面被测试**自己构造**出来，依赖由测试塞进去 |
+| 单元 + Widget | `./tool/test.sh` | 770 条。页面被测试**自己构造**出来，依赖由测试塞进去 |
 | 端到端集成 | `./tool/integration_test.sh` | 5 条。真 App、真数据库文件、真导航栈，从 `HomeShell` 点进去 |
 
 **为什么非要第二套**：用户报的「刚建的成员，历史里显示成已删除」在 Widget 层
@@ -105,7 +107,7 @@
 ```bash
 cd app
 flutter pub get
-./tool/test.sh              # 753 条，二十秒跑完（别直接 flutter test，见下）
+./tool/test.sh              # 770 条，二十秒跑完（别直接 flutter test，见下）
 ./tool/integration_test.sh  # 5 条端到端，需要 Xvfb，约 30 秒
 flutter analyze
 ```

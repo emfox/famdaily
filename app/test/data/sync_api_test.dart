@@ -351,4 +351,56 @@ void main() {
       expect(server.lastJson, isEmpty);
     });
   });
+
+  group('作废成员链接', () {
+    test('revoked 透传：true 和 false 不能混', () async {
+      server.body = {'ok': true, 'memberId': 'm1', 'revoked': true};
+      expect(
+        await api.revokeMemberLink(token: 't', memberId: 'm1'),
+        isTrue,
+        reason: '服务端说真废掉了一条，界面要说"已经作废"',
+      );
+      expect(server.lastPath, '/members/m1/unlink');
+      expect(server.lastAuth, 'Bearer t');
+
+      server.body = {'ok': true, 'memberId': 'm1', 'revoked': false};
+      expect(
+        await api.revokeMemberLink(token: 't', memberId: 'm1'),
+        isFalse,
+        reason:
+            '本来就没链接。压成 true 的话，一个从没生成过链接的成员'
+            '也会被告知"已经作废"',
+      );
+    });
+
+    test('revoked 缺失或不是 bool → false，且不抛错', () async {
+      // 探测值是**缺字段**，不是 false —— 缺字段才是 `as bool` 会崩的那种情况。
+      server.body = {'ok': true, 'memberId': 'm1'};
+      expect(await api.revokeMemberLink(token: 't', memberId: 'm1'), isFalse);
+
+      server.body = {'ok': true, 'revoked': 'yes'};
+      expect(await api.revokeMemberLink(token: 't', memberId: 'm1'), isFalse);
+
+      server.body = {'ok': true, 'revoked': 1};
+      expect(await api.revokeMemberLink(token: 't', memberId: 'm1'), isFalse);
+    });
+
+    test('404 的 message 从 error 对象里取出来，不是 "HTTP 404"', () async {
+      // 服务端的真实形状是 `{error:{code,message}}`，而 `_throwOnError`
+      // 第一版只认 `error` 是字符串，于是中文全丢、只剩 `HTTP 404`。
+      server.status = 404;
+      server.body = {
+        'error': {'code': 'member_not_found', 'message': '没有这个成员'},
+      };
+      await expectLater(
+        api.revokeMemberLink(token: 't', memberId: 'gone'),
+        throwsA(
+          isA<SyncHttpException>()
+              .having((e) => e.statusCode, 'statusCode', 404)
+              // 断言**文案**，不只断言类型：类型没变，只断言类型抓不住这个 bug。
+              .having((e) => e.message, 'message', '没有这个成员'),
+        ),
+      );
+    });
+  });
 }

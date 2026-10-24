@@ -184,6 +184,17 @@ void main() {
       final s = await service.syncNow();
       expect(s.shortLabel, isEmpty);
     });
+
+    test('没配对时 revokeMemberLink 抛 SyncNotPairedException，且不发请求', () async {
+      // 弹窗里其实没有"作废"入口可点（能点到就说明已经进 ready 态，而 ready
+      // 要求配对成功）。但这条仍然要测：作废是破坏性动作，
+      // "什么都没发出去"和"发出去了但失败"在界面上是两句不同的话。
+      await expectLater(
+        service.revokeMemberLink('m1'),
+        throwsA(isA<SyncNotPairedException>()),
+      );
+      expect(transport.calls, isEmpty, reason: '没配对就一个请求都不该发');
+    });
   });
 
   group('成功路径', () {

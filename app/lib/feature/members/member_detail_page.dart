@@ -166,6 +166,13 @@ class _MemberDetailPageState extends State<MemberDetailPage> {
     }
     await showDialog<void>(
       context: context,
+      // 点遮罩不关。
+      //
+      // 加「作废这个链接」之前，误触遮罩只是"白点了一次"；现在代价变了：
+      // 用户想"先复制，再去作废"却先把弹窗关掉，URL 就再也拿不回来了
+      // （服务端只存哈希），只能重新生成 —— 而重新生成会把**他本来不想废的
+      // 那条也顶掉**。为了一个误触，赔上两条链接。
+      barrierDismissible: false,
       builder: (_) => MemberLinkSheet(sync: sync, member: m),
     );
   }

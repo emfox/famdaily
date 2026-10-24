@@ -254,7 +254,10 @@ final class SyncService {
   }
 
   /// 作废成员的打卡链接（关掉那个入口）。
-  Future<void> revokeMemberLink(String memberId) async {
+  ///
+  /// 返回 `true` = 真的废掉了一条；`false` = 本来就没有有效链接。
+  /// **不要吞掉这个 bool**：界面对这两种情况说的是两句不同的话。
+  Future<bool> revokeMemberLink(String memberId) async {
     final cfg = await _config.load();
     if (cfg == null || !cfg.isComplete) {
       throw const SyncNotPairedException();
@@ -262,7 +265,7 @@ final class SyncService {
     final transport = _transportFactory();
     final api = _apiFactory(Uri.parse(cfg.baseUrl), transport);
     try {
-      await api.revokeMemberLink(token: cfg.token, memberId: memberId);
+      return await api.revokeMemberLink(token: cfg.token, memberId: memberId);
     } finally {
       api.close();
     }

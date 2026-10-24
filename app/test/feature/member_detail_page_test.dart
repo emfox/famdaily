@@ -11,16 +11,37 @@ import 'package:flutter_test/flutter_test.dart';
 
 const _ts = 1740787200000;
 
+/// 一条预设响应。
+final class _Resp {
+  const _Resp(this.status, this.body);
+
+  final int status;
+  final Map<String, Object?>? body;
+}
+
 /// 只认成员链接接口的假 transport。
 ///
 /// 故意**不**实现成一个"什么都能返回"的万能假货：那样测试会无意间依赖
 /// 它没实现的行为。这里每一条断言关心的东西（路径、Bearer、有没有被关）
 /// 都被单独记下来。
+///
+/// 默认响应（`status`/`body`）对**所有**路径生效；需要"一次测试里先 link
+/// 再 unlink"时用 `byPath` 给某条路径单独指定。**不按调用次序返回**：
+/// 次序依赖会让用例在加一个请求之后悄悄错位，而按路径匹配只会"没命中就用默认"。
 final class _FakeLinkTransport implements SyncTransport {
-  _FakeLinkTransport({required this.status, required this.body});
+  _FakeLinkTransport({
+    required this.status,
+    required this.body,
+    Map<String, _Resp>? byPath,
+    this.throwOn = const {},
+  }) : byPath = byPath ?? const {};
 
   final int status;
   final Map<String, Object?>? body;
+  final Map<String, _Resp> byPath;
+
+  /// 命中这些路径就直接抛 [TransportException]，模拟连不上。
+  final Set<String> throwOn;
 
   final List<String> calls = [];
   final List<String?> authHeaders = [];
@@ -34,7 +55,14 @@ final class _FakeLinkTransport implements SyncTransport {
   }) async {
     calls.add(url.path);
     authHeaders.add(headers['Authorization']);
-    return HttpResponseData(statusCode: status, json: this.body);
+    if (throwOn.contains(url.path)) {
+      throw TransportException('连不上');
+    }
+    final hit = byPath[url.path];
+    return HttpResponseData(
+      statusCode: hit?.status ?? status,
+      json: hit == null ? this.body : hit.body,
+    );
   }
 
   @override
@@ -100,7 +128,14 @@ void main() {
     _FakeLinkTransport makeTransport({
       int status = 200,
       Map<String, Object?>? body,
-    }) => _FakeLinkTransport(status: status, body: body);
+      Map<String, _Resp>? byPath,
+      Set<String> throwOn = const {},
+    }) => _FakeLinkTransport(
+      status: status,
+      body: body,
+      byPath: byPath,
+      throwOn: throwOn,
+    );
 
     SyncService makeSync(SyncTransport t, {bool paired = true}) => SyncService(
       db: db,
@@ -235,6 +270,31 @@ void main() {
 
       expect(find.textContaining('生成失败了'), findsOneWidget);
       expect(find.text('再试一次'), findsOneWidget);
+    });
+
+    testWidgets('「作废这个链接」只在弹窗里，详情页列表里没有', (tester) async {
+      // L-13。这条唯一的用处是防止有人把入口挪回详情页列表：
+      // 那样做的话，没生成过链接的成员点进去只会得到 revoked:false，白跑一趟。
+      await pair();
+      final t = makeTransport(
+        body: {'url': 'https://fam.example/m/abc', 'issuedAtMs': _ts},
+      );
+      await tester.pumpWidget(
+        _wrap(
+          MemberDetailPage(service: service, memberId: 'm1', sync: makeSync(t)),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // 打开之前，列表里没有。
+      expect(find.widgetWithText(ListTile, '作废这个链接'), findsNothing);
+      expect(find.text('作废这个链接'), findsNothing);
+
+      await tester.tap(find.text('生成打卡链接'));
+      await tester.pumpAndSettle();
+
+      // 弹窗里有，且只有一个。
+      expect(find.text('作废这个链接'), findsOneWidget);
     });
   });
 

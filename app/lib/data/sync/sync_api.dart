@@ -282,7 +282,26 @@ final class SyncApi {
   }
 
   /// 作废成员的打卡链接。
-  Future<void> revokeMemberLink({
+  ///
+  /// 返回**这次是不是真的废掉了一条**：
+  /// - `true` = 服务端那边确实有一条有效链接，被清掉了；
+  /// - `false` = 服务端本来就没有有效链接。
+  ///
+  /// 这不是"失败"：服务端对已关的灯不报错（`web_auth.mjs` 里 `revokeWebToken`
+  /// 的注释就是这么写的）。界面要把这两种情况说成两句不同的话 ——
+  /// 一个从没生成过链接的成员，不该被告知"已经作废"。
+  ///
+  /// 字段缺失/不是布尔值一律当作 `false`，**不抛 [SyncFormatException]**：
+  /// 副作用（链接真的被清了）在收到响应时已经发生了，抛错会让界面走进
+  /// "失败了，再试一次"，用户点第二次只会得到 `revoked:false` 和一句
+  /// "本来就没有链接" —— 比诚实地说"可能没废掉"更误导。
+  ///
+  /// 这与 [memberLink] 的严格风格**故意不一致**：那个拿不到 `url` 就没法用，
+  /// 必须报错；这个的返回值只影响措辞。
+  ///
+  /// 另：服务端的 `unlink` **不检查**成员是否已软删除（对比 `link` 会回 409
+  /// `member_deleted`）。那是有意设计，这里不为它加分支。
+  Future<bool> revokeMemberLink({
     required String token,
     required String memberId,
   }) async {
@@ -292,6 +311,8 @@ final class SyncApi {
       body: '{}',
     );
     _throwOnError(resp, '/members/unlink');
+    final revoked = resp.json?['revoked'];
+    return revoked is bool ? revoked : false;
   }
 
   /// `GET /export`：把服务端那份数据取回成本地备份文件的字节。
@@ -345,8 +366,7 @@ final class SyncApi {
     if (code >= 200 && code < 300) {
       return;
     }
-    final detail = resp.json?['error'] ?? resp.json?['message'];
-    final text = detail is String ? detail : 'HTTP $code';
+    final text = _errorText(resp.json, code);
     if (code == 401 || code == 403) {
       throw SyncAuthException(code, text);
     }
@@ -354,6 +374,37 @@ final class SyncApi {
       throw SyncFormatException(where, text);
     }
     throw SyncHttpException(code, text);
+  }
+
+  /// 从错误响应体里取出一句人话。
+  ///
+  /// 服务端（`server/src/http.mjs` 的统一出口）的 shape 是
+  /// `{ error: { code, message } }`，而这里**第一版只认 `error` 是字符串**，
+  /// 于是 `detail is String` 恒为假、中文 message 全丢，界面上只剩 `HTTP 404`。
+  /// ⚠️ 症状：所有服务端错误在 App 里都显示成「HTTP 4xx」，看起来像网关故障，
+  /// 实际是 App 自己把话说没了。
+  ///
+  /// 这个 bug 藏了很久没被发现，因为当时的 5 条测试喂的全是字符串形状 ——
+  /// 测试和实现一起"只认字符串"，等于给它盖了个章。现在两种形状都认，
+  /// 并且有专门的用例钉住对象形状。
+  ///
+  /// 字符串形状仍然要认：早期测试和网关（502 + `{error:'...'}`）都是这种。
+  static String _errorText(Map<String, Object?>? json, int code) {
+    final err = json?['error'];
+    if (err is String && err.isNotEmpty) {
+      return err;
+    }
+    if (err is Map<String, Object?>) {
+      final msg = err['message'];
+      if (msg is String && msg.isNotEmpty) {
+        return msg;
+      }
+    }
+    final legacy = json?['message'];
+    if (legacy is String && legacy.isNotEmpty) {
+      return legacy;
+    }
+    return 'HTTP $code';
   }
 }
 
