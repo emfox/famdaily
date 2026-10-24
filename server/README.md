@@ -41,6 +41,29 @@ FAMDAILY_PAIR_SECRET='自己定一个长口令' PORT=8787 node index.mjs
 | POST | `/pair/claim` | 同步码 | 码换长期 token，码即刻作废 |
 | POST | `/pair/rotate` | Bearer | 轮换 token，**其他设备全部失效**（手机丢了用这个） |
 | POST | `/sync` | Bearer | 推全量 + 拉增量，一个往返 |
+| POST | `/members/:id/link` | Bearer | 给成员发一个**网页打卡链接**，返回完整 URL（token 只在这里出现一次） |
+| POST | `/members/:id/unlink` | Bearer | 作废成员链接（连已发出去的 Cookie 一起废） |
+
+### 成员链接：URL 里带凭据，所以做两层降级
+
+成员链接给的是"不会用 App 的人"（爷爷、小孩），他手上只有一个能点开的网址。
+点开即进 —— 所以 URL 里必须有凭据。代价是 URL 会被带走：浏览器历史、
+微信聊天记录、截图、Referer。降级做法：
+
+1. **换票**：URL 里的 token 只用来换一次短命 ticket（写进 HttpOnly Cookie），
+   之后所有请求靠 Cookie。所以链接被别人看到，也只有"第一次打开"那一下有效。
+2. **Cookie 是 `HttpOnly` + `SameSite=Strict`**：脚本读不到；不随第三方站点发出。
+
+**两套凭据硬隔离**：设备 token 的哈希前缀是 `token:`，成员 token 是 `web:`。
+把成员链接塞进 `Authorization: Bearer` 查不到设备，反之亦然。
+
+**日志必须脱敏**：token 在 pathname 里（`/m/<token>`），而访问日志打的就是
+pathname。`src/redact.mjs` 把像凭据的整段换成 `***<长度>`，
+所以日志里看到的是 `GET /m/***43 200 3ms`。**这不是可选项**：
+不脱敏等于把一份成员链接册子写进日志文件。
+
+> 库里只存 token 的哈希，**明文只在签发响应里出现一次**。丢了只能重新生成
+> （旧链接会一并作废）。
 
 ### `/sync` 的两个水位
 

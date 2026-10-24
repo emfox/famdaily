@@ -18,5 +18,16 @@ export function createLimiters({ clock = Date.now } = {}) {
     // 同步：回前台就拉一次的家庭，一小时也就几十次。
     // 给到 60 次/分钟是为了容纳"改一条推一次"的防抖失败情形。
     sync: createRateLimiter({ limit: 60, windowMs: 60_000, clock }),
+
+    // ---- 网页端 ----
+
+    // 用 URL token 换 ticket：这里等于"验一个凭据"，是猜 token 的入口。
+    // 20 次/分钟：正常人一次点开就够；刷新页面不会重复换（已有 Cookie）。
+    webTicket: createRateLimiter({ limit: 20, windowMs: 60_000, clock }),
+    // 读：成员页首屏一次、打卡后刷新一次。60 次/分钟给足，防止脚本扫。
+    webRead: createRateLimiter({ limit: 60, windowMs: 60_000, clock }),
+    // 写：打卡是低频动作，但"点了没反应就再点"很常见。
+    // 30 次/分钟远高于任何正常使用，又不至于让误触把家里人的额度用光。
+    webWrite: createRateLimiter({ limit: 30, windowMs: 60_000, clock }),
   };
 }

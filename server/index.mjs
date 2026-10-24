@@ -20,6 +20,7 @@ import {
   resolveDevice,
 } from './src/pair.mjs';
 import { createSyncHandler } from './src/sync.mjs';
+import { handleMemberLink, handleMemberUnlink } from './src/web_link.mjs';
 
 /**
  * 数据库路径**必须是绝对路径**。
@@ -106,6 +107,22 @@ export function createApp({
       ctx.body = await readJson(ctx.req);
       authed((c) => {
         sendJson(c.res, 200, syncHandler(c));
+      })(ctx);
+    },
+
+    // ---- 成员链接（App 侧，走设备 Bearer）----
+    //
+    // 路径用 `/members/:id/link` 而不是 `/link/new?member=`：
+    // 成员 id 是路径的一部分，URL 本身就是完整意图，日志里一眼能看出
+    // "谁被发了链接"。（token 不在这里，它由响应体返回。）
+    'POST /members/:id/link': (ctx) => {
+      authed((c) => {
+        sendJson(c.res, 200, handleMemberLink(c, deps));
+      })(ctx);
+    },
+    'POST /members/:id/unlink': (ctx) => {
+      authed((c) => {
+        sendJson(c.res, 200, handleMemberUnlink(c, deps));
       })(ctx);
     },
   };

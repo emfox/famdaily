@@ -8,6 +8,8 @@
 
 import { createServer } from 'node:http';
 
+import { redactRequest } from './redact.mjs';
+
 /** 请求体上限。全量推送在家庭规模下约 150KB，8MB 是有余量的兜底。 */
 export const MAX_BODY_BYTES = 8 * 1024 * 1024;
 
@@ -152,7 +154,12 @@ export function createHttpServer({ routes, logger = console }) {
       }
     } finally {
       const ms = Date.now() - started;
-      logger.info?.(`${req.method} ${pathname} ${res.statusCode} ${ms}ms`);
+      // ⚠️ **必须脱敏**。网页端上线后，成员链接 token 就在 pathname 里
+      // （`/m/<token>`），原样打日志等于把一份成员链接册子写进日志文件。
+      // 早期这里打的是裸 `pathname`，理由只是"调试方便"。
+      logger.info?.(
+        `${redactRequest(req.method, pathname, url.search)} ${res.statusCode} ${ms}ms`,
+      );
     }
   });
 }
