@@ -7,8 +7,10 @@
  */
 
 import { resolve } from 'node:path';
+import { existsSync } from 'node:fs';
 import { openDb, createServerClock } from './src/db.mjs';
 import { createHttpServer, sendJson, readJson, HttpError } from './src/http.mjs';
+import { createStaticHandler } from './src/static.mjs';
 import { createLimiters } from './src/limits.mjs';
 import { extractToken } from './src/auth.mjs';
 import {
@@ -43,12 +45,25 @@ export function defaultDbPath() {
 }
 
 /**
+ * 静态产物目录：`server/public/`。
+ *
+ * 同样按**本文件位置**推算，不看 cwd —— 沙箱重发可能换工作目录。
+ * 网页端产物是 `web/` 下的源码，构建时拷进这里（或直接放源文件），
+ * 两者都不该跟着 cwd 漂。
+ */
+export function defaultPublicDir() {
+  const here = new URL('.', import.meta.url).pathname;
+  return resolve(here, 'public');
+}
+
+/**
  * 装配一个服务实例。测试也走这个函数，**不另写一份**——
  * "测试验证的是假实现"是前几轮最大的返工来源。
  */
 export function createApp({
   dbPath = process.env.FAMDAILY_DB ?? defaultDbPath(),
   pairSecret = process.env.FAMDAILY_PAIR_SECRET ?? '',
+  publicDir = process.env.FAMDAILY_PUBLIC ?? defaultPublicDir(),
   logger = console,
   clock = Date.now,
 } = {}) {
@@ -215,9 +230,13 @@ export function createApp({
     },
   };
 
-  const server = createHttpServer({ routes, logger });
+  const server = createHttpServer({
+    routes,
+    fallback: createStaticHandler({ root: publicDir }),
+    logger,
+  });
 
-  return { server, db, deps, close: () => db.close() };
+  return { server, db, deps, publicDir, close: () => db.close() };
 }
 
 /** 直接 `node index.mjs` 时起服务。 */
@@ -232,6 +251,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     console.log(
       `[famdaily-sync] listening on :${port}, db=${resolve(dbPath)}, families=${families}`,
     );
+    if (!existsSync(resolve(app.publicDir))) {
+      // 不打这一行的话，网页端表现为"接口都通，页面 404"，
+      // 而原因（产物没拷进来 / 路径算错了）在这一行里一目了然。
+      console.log(
+        `[famdaily-sync] 警告：静态目录不存在 ${resolve(app.publicDir)}，网页端会 404（接口不受影响）`,
+      );
+    }
     if (!process.env.FAMDAILY_PAIR_SECRET) {
       console.log(
         '[famdaily-sync] 警告：没设 FAMDAILY_PAIR_SECRET，/pair/new 会拒绝——已配对的设备照常同步',

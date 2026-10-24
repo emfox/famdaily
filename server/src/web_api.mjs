@@ -118,6 +118,10 @@ export function handleToday(ctx, deps) {
     items,
     // 规则解析失败的任务：前端要提示出来，不能静默少显示一条。
     hidden: today.hidden,
+    // 这一天的记录还能不能改（整页置灰用）。逐条还有 `items[].editable`，
+    // 两个都要给：翻到 40 天前时前端要一句"只能看，不能改"的说明，
+    // 而逐条判断只能得出"每一条都灰"，说不出原因。
+    dayEditable: canEdit(date, todayOnServer(now)),
     clock: clock.peek(),
   };
 }
