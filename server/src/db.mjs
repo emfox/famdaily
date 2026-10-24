@@ -1,18 +1,20 @@
 /**
- * SQLite 层：建表、打开、事务、单调时钟。
+ * SQLite 层：打开、事务、单调时钟。
  *
  * 用 `node:sqlite`（Node 22 内置，实测 SQLite 3.47.2）而不是 better-sqlite3：
  * 这是家里几个人用的小服务，**少一个原生模块就少一处"换个 Node 版本装不上"**。
+ *
+ * 建表与加列在 `migrate.mjs`。这里的 [`openDb`] 只管"打开 + 升到最新结构"。
  */
 
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
+import { migrate } from './migrate.mjs';
+
 /**
- * 建表语句。
- *
- * 三条设计要点，都不是随便写的：
+ * 表结构的三条设计要点（语句在 `migrate.mjs`），都不是随便写的：
  *
  * 1. **`tasks` 对 `members` 的外键是复合 `(family_id, member_id)`**。
  *    只用 `member_id` 的话，A 家的项目能挂到 B 家的成员上——跨家庭串数据，
@@ -24,110 +26,6 @@ import { dirname } from 'node:path';
  * 3. **每张表都有 `server_at_ms`**，写入时刷新。它是增量拉取的水位，
  *    必须严格单调递增（见 [nextServerAt]）。
  */
-const SCHEMA = `
-PRAGMA journal_mode = WAL;
-PRAGMA foreign_keys = ON;
-
-CREATE TABLE IF NOT EXISTS families (
-  id            TEXT PRIMARY KEY,
-  secret_hash   TEXT NOT NULL,
-  name          TEXT NOT NULL,
-  created_at_ms INTEGER NOT NULL
-);
-
--- 一台设备一条。token 只存 sha256，明文只在发出去那一次存在过。
-CREATE TABLE IF NOT EXISTS devices (
-  id            TEXT PRIMARY KEY,
-  family_id     TEXT NOT NULL REFERENCES families(id) ON DELETE CASCADE,
-  token_hash    TEXT NOT NULL UNIQUE,
-  label         TEXT,
-  created_at_ms INTEGER NOT NULL,
-  last_seen_ms  INTEGER
-);
-CREATE INDEX IF NOT EXISTS idx_devices_family ON devices(family_id);
-
--- 配对码：一次性、有有效期。存哈希不存明文。
-CREATE TABLE IF NOT EXISTS pair_codes (
-  code_hash     TEXT PRIMARY KEY,
-  family_id     TEXT NOT NULL REFERENCES families(id) ON DELETE CASCADE,
-  created_at_ms INTEGER NOT NULL,
-  expires_at_ms INTEGER NOT NULL,
-  claimed_at_ms INTEGER
-);
-CREATE INDEX IF NOT EXISTS idx_pair_codes_family ON pair_codes(family_id);
-
-CREATE TABLE IF NOT EXISTS members (
-  family_id         TEXT NOT NULL REFERENCES families(id) ON DELETE CASCADE,
-  id                TEXT NOT NULL,
-  name              TEXT NOT NULL,
-  avatar_id         TEXT,
-  sort_order        INTEGER NOT NULL DEFAULT 0,
-  created_at_ms     INTEGER NOT NULL,
-  updated_at_ms     INTEGER NOT NULL,
-  deleted_at_ms     INTEGER,
-  server_at_ms      INTEGER NOT NULL,
-  PRIMARY KEY (family_id, id)
-);
-CREATE INDEX IF NOT EXISTS idx_members_family_server ON members(family_id, server_at_ms);
-
-CREATE TABLE IF NOT EXISTS tasks (
-  family_id           TEXT NOT NULL,
-  id                  TEXT NOT NULL,
-  member_id           TEXT NOT NULL,
-  name                TEXT NOT NULL,
-  note                TEXT,
-  icon_id             TEXT,
-  repeat_json         TEXT NOT NULL,
-  time_json           TEXT NOT NULL,
-  course_start        TEXT,
-  course_end          TEXT,
-  course_total_days   INTEGER,
-  status              TEXT NOT NULL DEFAULT 'active',
-  reminder_enabled    INTEGER NOT NULL DEFAULT 1,
-  sort_order          INTEGER NOT NULL DEFAULT 0,
-  rules_effective_from TEXT,
-  created_at_ms       INTEGER NOT NULL,
-  updated_at_ms       INTEGER NOT NULL,
-  deleted_at_ms       INTEGER,
-  server_at_ms        INTEGER NOT NULL,
-  PRIMARY KEY (family_id, id),
-  -- 复合外键：项目只能挂在**同一家庭**的成员上。
-  FOREIGN KEY (family_id, member_id) REFERENCES members(family_id, id)
-);
-CREATE INDEX IF NOT EXISTS idx_tasks_family_server ON tasks(family_id, server_at_ms);
-
--- 打卡。deleted=1 是"墓碑"：客户端推的是全量当前状态，本地没有这条
--- 就等于"想删"，但服务端得留个记号，否则拉取端无法区分
--- "作者撤销了"和"这条还没同步给我"。
-CREATE TABLE IF NOT EXISTS checkins (
-  family_id           TEXT NOT NULL,
-  task_id             TEXT NOT NULL,
-  date                TEXT NOT NULL,
-  slot_index          INTEGER NOT NULL,
-  state               TEXT NOT NULL,
-  done_at_ms          INTEGER,
-  due_at_minute_of_day INTEGER,
-  note                TEXT,
-  deleted             INTEGER NOT NULL DEFAULT 0,
-  deleted_at_ms       INTEGER,
-  created_at_ms       INTEGER NOT NULL,
-  updated_at_ms       INTEGER NOT NULL,
-  server_at_ms        INTEGER NOT NULL,
-  PRIMARY KEY (family_id, task_id, date, slot_index),
-  FOREIGN KEY (family_id, task_id) REFERENCES tasks(family_id, id)
-);
-CREATE INDEX IF NOT EXISTS idx_checkins_family_server ON checkins(family_id, server_at_ms);
-
-CREATE TABLE IF NOT EXISTS settings (
-  family_id     TEXT NOT NULL REFERENCES families(id) ON DELETE CASCADE,
-  key           TEXT NOT NULL,
-  value         TEXT NOT NULL,
-  updated_at_ms INTEGER NOT NULL,
-  server_at_ms  INTEGER NOT NULL,
-  PRIMARY KEY (family_id, key)
-);
-CREATE INDEX IF NOT EXISTS idx_settings_family_server ON settings(family_id, server_at_ms);
-`;
 
 /**
  * 打开数据库。
@@ -141,7 +39,12 @@ export function openDb(path) {
     mkdirSync(dirname(path), { recursive: true });
   }
   const db = new DatabaseSync(path);
-  db.exec(SCHEMA);
+  // WAL 和外键是连接级开关，每次连接都要设，不归迁移管。
+  db.exec(`
+    PRAGMA journal_mode = WAL;
+    PRAGMA foreign_keys = ON;
+  `);
+  migrate(db);
   return db;
 }
 
