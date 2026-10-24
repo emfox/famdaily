@@ -6,10 +6,13 @@ import '../../app/app_boot.dart';
 import '../../app/build_info.dart';
 import '../../data/backup/backup_service.dart';
 import '../../data/repo_impl/reminder_scheduler.dart';
+import '../../data/sync/sync_config.dart';
+import '../../data/sync/sync_service.dart';
 import '../../domain/notification/window_policy.dart';
 import 'backup_page.dart';
 import 'reminder_permission.dart';
 import 'reminder_settings_page.dart';
+import 'sync_page.dart';
 
 /// 设置页。
 ///
@@ -160,6 +163,26 @@ class _SettingsPageState extends State<SettingsPage> {
     await _load();
   }
 
+  Future<void> _openSync() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => SyncPage(
+          service: widget.services.sync,
+          config: SyncConfigStore(widget.services.db),
+          // 配对/断开之后这一行要跟着变
+          onPaired: () async {
+            if (mounted) {
+              setState(() {});
+            }
+          },
+        ),
+      ),
+    );
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
   Future<void> _openBackup() async {
     final backup = widget.backup;
     if (backup == null) {
@@ -245,6 +268,15 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
                 const Divider(height: 24),
 
+                // 同步放在「家人」下面、「数据」上面：它管的是
+                // "我们一家人的东西能不能对上"，不是备份。
+                const _SectionHeader('家人的手机'),
+                _SyncTile(
+                  service: widget.services.sync,
+                  onOpen: () => unawaited(_openSync()),
+                ),
+                const Divider(height: 24),
+
                 const _SectionHeader('数据'),
                 ListTile(
                   leading: const Icon(Icons.file_download_outlined),
@@ -282,6 +314,55 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
               ],
             ),
+    );
+  }
+}
+
+/// 设置页里「同步」那一行。
+///
+/// 只显示一句状态（未开启 / 刚刚同步 / 同步码已失效），**不放同步按钮**：
+/// 点进来才有细节。首页尤其不该出现任何同步状态 —— 用户是来打卡的，
+/// 不是来运维的。
+class _SyncTile extends StatelessWidget {
+  const _SyncTile({required this.service, required this.onOpen});
+
+  final SyncService service;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<SyncStatus>(
+      stream: service.stream,
+      initialData: service.status,
+      builder: (context, snapshot) {
+        final status = snapshot.data ?? const SyncStatus();
+        final label = status.shortLabel;
+        final failed = status.outcome == SyncOutcome.failed;
+        final theme = Theme.of(context);
+        return ListTile(
+          leading: Icon(
+            failed ? Icons.sync_problem : Icons.devices_outlined,
+          ),
+          title: const Text('多台手机同步'),
+          subtitle: const Text('家人在自己手机上打卡，这里也看得到'),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (label.isNotEmpty)
+                Text(
+                  label,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: failed
+                        ? theme.colorScheme.error
+                        : theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              const Icon(Icons.chevron_right, size: 18),
+            ],
+          ),
+          onTap: onOpen,
+        );
+      },
     );
   }
 }

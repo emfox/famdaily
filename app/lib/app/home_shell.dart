@@ -32,8 +32,12 @@ class HomeShell extends StatefulWidget {
   State<HomeShell> createState() => _HomeShellState();
 }
 
-class _HomeShellState extends State<HomeShell> {
+class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   late int _index = widget.initialIndex;
+
+  /// 回前台的监听挂在 Shell 上而不是 `main`：
+  /// 它是唯一生命周期与 App 一致、又不是 Widget 的地方。
+  late final WidgetsBindingObserver _lifecycle = this;
   late final HistoryService _history = HistoryService(widget.services.db);
   late final MemberService _members = MemberService(
     db: widget.services.db,
@@ -60,6 +64,31 @@ class _HomeShellState extends State<HomeShell> {
   void initState() {
     super.initState();
     unawaited(_refreshMemberCount());
+    WidgetsBinding.instance.addObserver(_lifecycle);
+
+    // 冷启动同步：**必须排在首次重排之后**（那一步在 `AppBoot` 里已经跑完），
+    // 且不 await —— 进主界面不等它。没配对过时它立刻返回。
+    //
+    // 放进 `addPostFrameCallback` 是为了让首屏先画出来：同步可能在
+    // 有数据写入时触发重排，而重排要碰通知插件，卡在首帧里就是白屏一下。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(widget.services.sync.syncNow(reason: 'appLaunch'));
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // `onForeground` 自己判断"距上次成功是否超过 30 秒"：
+      // 用户在 App 里切来切去不该每次都发请求。
+      unawaited(widget.services.sync.onForeground());
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(_lifecycle);
+    super.dispose();
   }
 
   Future<void> _refreshMemberCount() async {

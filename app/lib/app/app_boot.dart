@@ -17,6 +17,9 @@ import '../data/notifier/notification_service.dart';
 import '../data/photo/image_picker_photo_picker.dart';
 import '../data/photo/photo_store.dart';
 import '../data/repo_impl/reminder_scheduler.dart';
+import '../data/sync/sync_api.dart';
+import '../data/sync/sync_config.dart';
+import '../data/sync/sync_service.dart';
 import '../domain/model/member.dart' as domain;
 import '../domain/notification/window_policy.dart';
 import '../domain/model/local_date.dart';
@@ -30,6 +33,7 @@ class AppServices {
     required this.scheduler,
     required this.photoPicker,
     required this.photoStore,
+    required this.sync,
   });
 
   final AppDatabase db;
@@ -42,6 +46,9 @@ class AppServices {
 
   /// 照片落盘与读取（写相对路径，见 `photo_store.dart` 的说明）。
   final PhotoStore photoStore;
+
+  /// 多端同步。没配对过时它什么都不做，所以可以当成永远存在。
+  final SyncService sync;
 }
 
 /// 启动引导。可重入（`init` 只会真正跑一次）。
@@ -88,12 +95,28 @@ class AppBoot {
       debugPrint('[boot] 首次重排失败：$e');
     }
 
+    // 同步排在首次重排**之后**装配：同步可能带来新项目，反过来的话
+    // 首次重排用的是即将过期的数据。而真正的第一次同步在
+    // `HomeShell.initState` 里异步发起，不阻塞进主界面。
+    final sync = SyncService(
+      db: db,
+      config: SyncConfigStore(db),
+      apiFactory: (baseUrl, transport) =>
+          SyncApi(transport: transport, baseUrl: baseUrl),
+      // 远端真有写入才重排：改了规则不重排，系统里排队的还是旧时间的通知，
+      // 这是静默错误里最难发现的一种。
+      onDataChanged: () async {
+        await scheduler.reschedule(trigger: RescheduleTrigger.dataChanged);
+      },
+    );
+
     final services = AppServices(
       db: db,
       notifications: notifications,
       scheduler: scheduler,
       photoPicker: ImagePickerPhotoPicker(),
       photoStore: photoStore,
+      sync: sync,
     );
     _services = services;
     return services;
@@ -130,6 +153,7 @@ class AppBoot {
   LocalDate get today => LocalDate.fromDateTime(DateTime.now());
 
   void dispose() {
+    _services?.sync.dispose();
     // 数据库连接要显式关掉：不关的话热重载会留下旧连接，
     // 开发期会出现"改了 schema 但没生效"的假象。
     unawaited(_services?.db.close());

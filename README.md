@@ -78,13 +78,13 @@
 | **P1 / P2 全部完成** | ✅ |
 | P3：网页端 + 同步 | ⬜ 下一步 |
 
-**651 个单元/组件测试 + 5 个端到端集成测试全绿，`flutter analyze` 零问题。**
+**695 个单元/组件测试 + 5 个端到端集成测试全绿，`flutter analyze` 零问题。**
 
 两套测试跑的是两件不同的事：
 
 | 层 | 命令 | 测什么 |
 |---|---|---|
-| 单元 + Widget | `./tool/test.sh` | 651 条。页面被测试**自己构造**出来，依赖由测试塞进去 |
+| 单元 + Widget | `./tool/test.sh` | 695 条。页面被测试**自己构造**出来，依赖由测试塞进去 |
 | 端到端集成 | `./tool/integration_test.sh` | 5 条。真 App、真数据库文件、真导航栈，从 `HomeShell` 点进去 |
 
 **为什么非要第二套**：用户报的「刚建的成员，历史里显示成已删除」在 Widget 层
@@ -95,7 +95,7 @@
 ```bash
 cd app
 flutter pub get
-./tool/test.sh              # 651 条，二十秒跑完（别直接 flutter test，见下）
+./tool/test.sh              # 695 条，二十秒跑完（别直接 flutter test，见下）
 ./tool/integration_test.sh  # 5 条端到端，需要 Xvfb，约 30 秒
 flutter analyze
 ```

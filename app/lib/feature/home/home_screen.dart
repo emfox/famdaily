@@ -296,6 +296,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         trigger: RescheduleTrigger.dataChanged,
       ),
     );
+    // 首页所有写操作都从这里过（打卡、补卡、备注、建/改项目），
+    // 在这里挂一次同步比在每个写点各挂一次可靠 —— 漏一个就是"这条改动
+    // 永远不同步"，而且完全看不出来。防抖在 SyncService 里做。
+    widget.services.sync.notifyLocalChange();
   }
 
   /// 从成员视图点头像进成员详情（ui-spec §5）。

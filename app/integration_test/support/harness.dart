@@ -19,6 +19,9 @@ import 'package:famdaily/data/db/app_database.dart';
 import 'package:famdaily/data/notifier/notification_service.dart';
 import 'package:famdaily/data/photo/photo_store.dart';
 import 'package:famdaily/data/repo_impl/reminder_scheduler.dart';
+import 'package:famdaily/data/sync/sync_api.dart';
+import 'package:famdaily/data/sync/sync_config.dart';
+import 'package:famdaily/data/sync/sync_service.dart';
 import 'package:famdaily/domain/model/local_date.dart' as domain;
 import 'package:famdaily/domain/notification/notification_planner.dart';
 import 'package:famdaily/main.dart';
@@ -184,12 +187,29 @@ final class Harness {
   /// 里的网关），所以这里给一个**永远不会被调用**的真实现——只要不调
   /// 它的方法，它就不需要插件。这样既不用为测试去改生产类型，
   /// 也不会因为用了假类型而绕开将来界面对它的使用。
+  ///
+  /// 同步给一个**没配对过**的实例：`syncNow` 会立刻返回 notConfigured，
+  /// 一个请求都不发。集成测试跑在没网/有网都可能的环境里，绝不能让它
+  /// 真的去连一个不存在的服务端。
+  ///
+  /// `sync` **必须是同一个实例**：它内部有定时器（防抖、退避），
+  /// 每访问一次 getter 就新建一个的话，旧的那些定时器再没人管，
+  /// 会在 `db.close()` 之后触发，报一句 "Can't re-open a database
+  /// after closing it" 把测试判红。
+  late final SyncService _sync = SyncService(
+    db: db,
+    config: SyncConfigStore(db),
+    apiFactory: (baseUrl, transport) =>
+        SyncApi(transport: transport, baseUrl: baseUrl),
+  );
+
   AppServices get services => AppServices(
     db: db,
     notifications: NotificationService(),
     scheduler: scheduler,
     photoPicker: picker,
     photoStore: photoStore,
+    sync: _sync,
   );
 
   /// 直接给 App 一套 services（跳过 bootstrap 的插件初始化）。
@@ -224,6 +244,8 @@ final class Harness {
   }
 
   Future<void> dispose() async {
+    // 先停同步的定时器再关库：反过来定时器会在关库之后醒过来。
+    _sync.dispose();
     await db.close();
     if (tempRoot.existsSync()) {
       tempRoot.deleteSync(recursive: true);
