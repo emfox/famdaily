@@ -1,0 +1,13 @@
+{
+  "name": "famdaily-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Famdaily 的成员打卡页（零依赖 ES 模块）",
+  "type": "module",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\""
+  }
+}

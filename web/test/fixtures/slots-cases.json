@@ -1,0 +1,1509 @@
+{
+  "说明": [
+    "双端共享夹具：Dart 侧 app/test/domain/slots_fixture_test.dart 与 JS 侧 web/test/rules.test.mjs 各跑一遍。",
+    "期望值是**手算**的，不是从任何一侧的实现跑出来的 —— 用代码生成期望值等于让同一段逻辑给自己判卷。",
+    "手算用的参照：Python datetime 独立算出的 epochDay 与 weekday（见各 case 的 备注）。",
+    "格式约定：",
+    "  task.repeat  = App 的 repeat_json 解析后的对象（已展开成对象，不是字符串）",
+    "  task.time    = App 的 time_json 解析后的对象",
+    "  task.courseStart/courseEnd/courseTotalDays = tasks 表的三列；全 null 表示长期",
+    "  expected     = [[slotIndex, dueDate, dueTime], ...]，按 (dueDate+dueTime, taskId, index) 升序",
+    "  dueDate/dueTime 是**真实触发日期/时刻**（已跨天折算），不是疗程日"
+  ],
+  "version": 1,
+  "cases": [
+    {
+      "name": "每天 20:00，三天窗口",
+      "备注": "最简基线：index 每天从 0 重来",
+      "date": "2026-10-24",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {},
+          "time": {
+            "type": "fixed",
+            "times": [
+              "20:00"
+            ]
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        }
+      ],
+      "expected": [
+        [
+          "a1",
+          0,
+          "2026-10-24",
+          "20:00"
+        ]
+      ],
+      "spanDays": 1
+    },
+    {
+      "name": "一天三次 08:00 / 15:00 / 22:00",
+      "备注": "index 按时间递增，不能按配置顺序",
+      "date": "2026-10-24",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {},
+          "time": {
+            "type": "fixed",
+            "times": [
+              "22:00",
+              "08:00",
+              "15:00"
+            ]
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        }
+      ],
+      "expected": [
+        [
+          "a1",
+          0,
+          "2026-10-24",
+          "08:00"
+        ],
+        [
+          "a1",
+          1,
+          "2026-10-24",
+          "15:00"
+        ],
+        [
+          "a1",
+          2,
+          "2026-10-24",
+          "22:00"
+        ]
+      ],
+      "spanDays": 1
+    },
+    {
+      "name": "跟随午饭，饭前 30 分钟",
+      "备注": "offset -30，12:00 → 11:30。负偏移但没跨天，取整不影响",
+      "date": "2026-10-24",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {},
+          "time": {
+            "type": "meal",
+            "anchors": [
+              "lunch"
+            ],
+            "offset": -30
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        }
+      ],
+      "expected": [
+        [
+          "a1",
+          0,
+          "2026-10-24",
+          "11:30"
+        ]
+      ],
+      "spanDays": 1
+    },
+    {
+      "name": "跟随早饭，饭前 60 分钟 → 落到前一天",
+      "备注": "07:30 - 60 = 390，嗯，07:30 是 450，450-60=390=06:30 同天。改用 00:10 早饭才能跨天，但早饭时刻是用户可改的，所以用 overrides 造一个 00:10 的早饭。00:10=10，10-60=-50，floor(-50/1440)=-1 → 前一天 23:10。⚠️ 用 Math.trunc 会得到 -0 → 当天 23:10，差一天",
+      "date": "2026-10-24",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {},
+          "time": {
+            "type": "meal",
+            "anchors": [
+              "breakfast"
+            ],
+            "offset": -60,
+            "overrides": {
+              "breakfast": "00:10"
+            }
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        }
+      ],
+      "expected": [
+        [
+          "a1",
+          0,
+          "2026-10-23",
+          "23:10"
+        ]
+      ],
+      "spanDays": 1
+    },
+    {
+      "name": "跟随晚饭后 400 分钟 → 次日凌晨",
+      "备注": "18:30=1110，1110+400=1510。1510>1439，1500 是次日 01:10（1510-1440=70=01:10）。⚠️ 这里 index 仍记在**疗程日** 10-24 名下的第 0 次",
+      "date": "2026-10-24",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {},
+          "time": {
+            "type": "meal",
+            "anchors": [
+              "dinner"
+            ],
+            "offset": 400
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        }
+      ],
+      "expected": [
+        [
+          "a1",
+          0,
+          "2026-10-25",
+          "01:10"
+        ]
+      ],
+      "spanDays": 1
+    },
+    {
+      "name": "同一任务两个锚点，其中一个跨午夜",
+      "备注": "offset=400。早饭 07:30=450 → 850=当天 14:10；晚饭 18:30=1110 → 1510=次日 01:10。两条都在**同一天名下**，index 按真实触发时刻 0 / 1。⚠️ 期望值第一版我手写成 14:50 是错的，已用 Python 独立核算订正",
+      "date": "2026-10-24",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {},
+          "time": {
+            "type": "meal",
+            "anchors": [
+              "breakfast",
+              "dinner"
+            ],
+            "offset": 400
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        }
+      ],
+      "expected": [
+        [
+          "a1",
+          0,
+          "2026-10-24",
+          "14:10"
+        ],
+        [
+          "a1",
+          1,
+          "2026-10-25",
+          "01:10"
+        ]
+      ],
+      "spanDays": 1
+    },
+    {
+      "name": "每 2 小时，09:00–21:00",
+      "备注": "含起含止：9,11,13,15,17,19,21 共 7 条",
+      "date": "2026-10-24",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {},
+          "time": {
+            "type": "interval",
+            "every": 120,
+            "from": "09:00",
+            "to": "21:00"
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        }
+      ],
+      "expected": [
+        [
+          "a1",
+          0,
+          "2026-10-24",
+          "09:00"
+        ],
+        [
+          "a1",
+          1,
+          "2026-10-24",
+          "11:00"
+        ],
+        [
+          "a1",
+          2,
+          "2026-10-24",
+          "13:00"
+        ],
+        [
+          "a1",
+          3,
+          "2026-10-24",
+          "15:00"
+        ],
+        [
+          "a1",
+          4,
+          "2026-10-24",
+          "17:00"
+        ],
+        [
+          "a1",
+          5,
+          "2026-10-24",
+          "19:00"
+        ],
+        [
+          "a1",
+          6,
+          "2026-10-24",
+          "21:00"
+        ]
+      ],
+      "spanDays": 1
+    },
+    {
+      "name": "每 2 小时，09:00–20:00（末次不整除）",
+      "备注": "9,11,13,15,17,19 共 6 条；21:00 超过 20:00 不生成。范围差 660 分钟，660/120=5.5，trunc=5，count=6",
+      "date": "2026-10-24",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {},
+          "time": {
+            "type": "interval",
+            "every": 120,
+            "from": "09:00",
+            "to": "20:00"
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        }
+      ],
+      "expected": [
+        [
+          "a1",
+          0,
+          "2026-10-24",
+          "09:00"
+        ],
+        [
+          "a1",
+          1,
+          "2026-10-24",
+          "11:00"
+        ],
+        [
+          "a1",
+          2,
+          "2026-10-24",
+          "13:00"
+        ],
+        [
+          "a1",
+          3,
+          "2026-10-24",
+          "15:00"
+        ],
+        [
+          "a1",
+          4,
+          "2026-10-24",
+          "17:00"
+        ],
+        [
+          "a1",
+          5,
+          "2026-10-24",
+          "19:00"
+        ]
+      ],
+      "spanDays": 1
+    },
+    {
+      "name": "combined：固定 09:00/15:00 + 固定 15:00/20:00",
+      "备注": "交集去重：15:00 重复只算一次 → 09,15,20 共 3 条",
+      "date": "2026-10-24",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {},
+          "time": {
+            "type": "combined",
+            "rules": [
+              {
+                "type": "fixed",
+                "times": [
+                  "09:00",
+                  "15:00"
+                ]
+              },
+              {
+                "type": "fixed",
+                "times": [
+                  "15:00",
+                  "20:00"
+                ]
+              }
+            ]
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        }
+      ],
+      "expected": [
+        [
+          "a1",
+          0,
+          "2026-10-24",
+          "09:00"
+        ],
+        [
+          "a1",
+          1,
+          "2026-10-24",
+          "15:00"
+        ],
+        [
+          "a1",
+          2,
+          "2026-10-24",
+          "20:00"
+        ]
+      ],
+      "spanDays": 1
+    },
+    {
+      "name": "combined：跨午夜子规则（当前行为，见已知缺陷 BUG-1）",
+      "备注": "子规则 A：fixed 23:30（1410）；子规则 B：meal dinner +360 → 1110+360=1470，本应次日 00:30。⚠️ 但 CombinedTimeRule 只重写 timesOn，没重写 shiftedMinutesOn，跨天信息在这一层就被归一化抹掉了，所以 B 被当成**当天** 00:30（30 分钟）→ 期望值是 10-24 00:30 而不是 10-25 00:30。这是 Dart 侧同样的缺陷，本夹具如实记录**当前**行为，修好后这条要一起改。见 docs/architecture.zh_CN.md 已知缺陷 BUG-1",
+      "date": "2026-10-24",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {},
+          "time": {
+            "type": "combined",
+            "rules": [
+              {
+                "type": "fixed",
+                "times": [
+                  "23:30"
+                ]
+              },
+              {
+                "type": "meal",
+                "anchors": [
+                  "dinner"
+                ],
+                "offset": 360
+              }
+            ]
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        }
+      ],
+      "expected": [
+        [
+          "a1",
+          0,
+          "2026-10-24",
+          "00:30"
+        ],
+        [
+          "a1",
+          1,
+          "2026-10-24",
+          "23:30"
+        ]
+      ],
+      "spanDays": 1
+    },
+    {
+      "name": "每 3 天一次，锚点在今天 → 今天命中",
+      "备注": "anchor=2026-10-24，diff=0，0%3=0",
+      "date": "2026-10-24",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {
+            "everyNDays": 3,
+            "anchor": "2026-10-24"
+          },
+          "time": {
+            "type": "fixed",
+            "times": [
+              "20:00"
+            ]
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        }
+      ],
+      "expected": [
+        [
+          "a1",
+          0,
+          "2026-10-24",
+          "20:00"
+        ]
+      ],
+      "spanDays": 1
+    },
+    {
+      "name": "每 3 天一次，锚点在后天 → 今天不命中",
+      "备注": "anchor=2026-10-26，diff=-2，-2%3≠0 不命中。说明：这条只覆盖语义，**不能**区分 % 与 floorMod（判据是 ===0，两者等价，见 repeat_rule.mjs 的 mod() 注释）",
+      "date": "2026-10-24",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {
+            "everyNDays": 3,
+            "anchor": "2026-10-26"
+          },
+          "time": {
+            "type": "fixed",
+            "times": [
+              "20:00"
+            ]
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        }
+      ],
+      "expected": [],
+      "spanDays": 1
+    },
+    {
+      "name": "每 3 天一次，锚点在昨天 → 今天命中（负数取模）",
+      "备注": "anchor=2026-10-21，diff=3，命中",
+      "date": "2026-10-24",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {
+            "everyNDays": 3,
+            "anchor": "2026-10-21"
+          },
+          "time": {
+            "type": "fixed",
+            "times": [
+              "20:00"
+            ]
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        }
+      ],
+      "expected": [
+        [
+          "a1",
+          0,
+          "2026-10-24",
+          "20:00"
+        ]
+      ],
+      "spanDays": 1
+    },
+    {
+      "name": "每 3 天一次，查 anchor 之前 3 天（负数取模，必须命中）",
+      "备注": "anchor=2026-10-24，查 2026-10-21，diff=-3，命中。同样不能区分 % 与 floorMod，只验证「过去的日子也按同一周期算」",
+      "date": "2026-10-21",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {
+            "everyNDays": 3,
+            "anchor": "2026-10-24"
+          },
+          "time": {
+            "type": "fixed",
+            "times": [
+              "20:00"
+            ]
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        }
+      ],
+      "expected": [
+        [
+          "a1",
+          0,
+          "2026-10-21",
+          "20:00"
+        ]
+      ],
+      "spanDays": 1
+    },
+    {
+      "name": "每 2 天一次，查 anchor 之前 2 天（负数取模，必须命中）",
+      "备注": "anchor=2026-10-24，查 2026-10-22，diff=-2，命中",
+      "date": "2026-10-22",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {
+            "everyNDays": 2,
+            "anchor": "2026-10-24"
+          },
+          "time": {
+            "type": "fixed",
+            "times": [
+              "20:00"
+            ]
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        }
+      ],
+      "expected": [
+        [
+          "a1",
+          0,
+          "2026-10-22",
+          "20:00"
+        ]
+      ],
+      "spanDays": 1
+    },
+    {
+      "name": "每 2 天一次，查 anchor 之前 4 天（负数取模，必须命中）",
+      "备注": "anchor=2026-10-24，查 2026-10-20，diff=-4，命中",
+      "date": "2026-10-20",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {
+            "everyNDays": 2,
+            "anchor": "2026-10-24"
+          },
+          "time": {
+            "type": "fixed",
+            "times": [
+              "20:00"
+            ]
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        }
+      ],
+      "expected": [
+        [
+          "a1",
+          0,
+          "2026-10-20",
+          "20:00"
+        ]
+      ],
+      "spanDays": 1
+    },
+    {
+      "name": "每 3 天一次，查 anchor 之前 4 天（不命中）",
+      "备注": "anchor=2026-10-24，查 2026-10-20，diff=-4，-4%3=2 不命中",
+      "date": "2026-10-20",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {
+            "everyNDays": 3,
+            "anchor": "2026-10-24"
+          },
+          "time": {
+            "type": "fixed",
+            "times": [
+              "20:00"
+            ]
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        }
+      ],
+      "expected": [],
+      "spanDays": 1
+    },
+    {
+      "name": "每周一三五",
+      "备注": "2026-10-24 经 Python 确认是周六（isoweekday=6）→ 不命中",
+      "date": "2026-10-24",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {
+            "weekdays": [
+              1,
+              3,
+              5
+            ]
+          },
+          "time": {
+            "type": "fixed",
+            "times": [
+              "20:00"
+            ]
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        }
+      ],
+      "expected": [],
+      "spanDays": 1
+    },
+    {
+      "name": "每周一三五，查周五命中",
+      "备注": "2026-10-23 是周五（isoweekday=5）→ 命中",
+      "date": "2026-10-23",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {
+            "weekdays": [
+              1,
+              3,
+              5
+            ]
+          },
+          "time": {
+            "type": "fixed",
+            "times": [
+              "20:00"
+            ]
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        }
+      ],
+      "expected": [
+        [
+          "a1",
+          0,
+          "2026-10-23",
+          "20:00"
+        ]
+      ],
+      "spanDays": 1
+    },
+    {
+      "name": "双周（evenWeeks），2026-10-24 那周是双周",
+      "备注": "Python 算式：epochDay=20750，weekday=6，mondayBased=20750-5=20745，weekIndex=(20745+3)/7=2964，2964 偶 → 双周命中",
+      "date": "2026-10-24",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {
+            "parity": "evenWeeks"
+          },
+          "time": {
+            "type": "fixed",
+            "times": [
+              "20:00"
+            ]
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        }
+      ],
+      "expected": [
+        [
+          "a1",
+          0,
+          "2026-10-24",
+          "20:00"
+        ]
+      ],
+      "spanDays": 1
+    },
+    {
+      "name": "单周（oddWeeks），2026-10-24 那周是双周 → 不命中",
+      "备注": "同上，weekIndex=2964 偶，oddWeeks 要求 weekIndex 奇 → 不命中",
+      "date": "2026-10-24",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {
+            "parity": "oddWeeks"
+          },
+          "time": {
+            "type": "fixed",
+            "times": [
+              "20:00"
+            ]
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        }
+      ],
+      "expected": [],
+      "spanDays": 1
+    },
+    {
+      "name": "双周，跨年那周的周一 2026-01-05",
+      "备注": "Python：epochDay=20458，weekday=1，mondayBased=20458，weekIndex=(20458+3)/7=2923，奇数 → 单周，evenWeeks 不命中。这条能抓住「基准日不是固定的 1970-01-01」的错",
+      "date": "2026-01-05",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {
+            "parity": "evenWeeks"
+          },
+          "time": {
+            "type": "fixed",
+            "times": [
+              "20:00"
+            ]
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        }
+      ],
+      "expected": [],
+      "spanDays": 1
+    },
+    {
+      "name": "单周，2026-01-05（上一周 2025-12-29 是双周 2922）",
+      "备注": "weekIndex=2923 奇 → oddWeeks 命中。与上一条反着，一对",
+      "date": "2026-01-05",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {
+            "parity": "oddWeeks"
+          },
+          "time": {
+            "type": "fixed",
+            "times": [
+              "20:00"
+            ]
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        }
+      ],
+      "expected": [
+        [
+          "a1",
+          0,
+          "2026-01-05",
+          "20:00"
+        ]
+      ],
+      "spanDays": 1
+    },
+    {
+      "name": "工作日，周六不命中",
+      "备注": "2026-10-24 周六 → workdays 不命中",
+      "date": "2026-10-24",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {
+            "parity": "workdays"
+          },
+          "time": {
+            "type": "fixed",
+            "times": [
+              "20:00"
+            ]
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        }
+      ],
+      "expected": [],
+      "spanDays": 1
+    },
+    {
+      "name": "周末，周六命中",
+      "备注": "2026-10-24 周六 → weekends 命中",
+      "date": "2026-10-24",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {
+            "parity": "weekends"
+          },
+          "time": {
+            "type": "fixed",
+            "times": [
+              "20:00"
+            ]
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        }
+      ],
+      "expected": [
+        [
+          "a1",
+          0,
+          "2026-10-24",
+          "20:00"
+        ]
+      ],
+      "spanDays": 1
+    },
+    {
+      "name": "每月 31 号，查 2 月 → 当月跳过",
+      "备注": "2026-02-01，day=1 ≠ 31 → 不命中。2 月最多 28 天，这整月都不会有槽位，不做「折回月末」",
+      "date": "2026-02-01",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {
+            "monthDays": [
+              31
+            ]
+          },
+          "time": {
+            "type": "fixed",
+            "times": [
+              "20:00"
+            ]
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        }
+      ],
+      "expected": [],
+      "spanDays": 1
+    },
+    {
+      "name": "每月 31 号，查 3 月 31 日 → 命中",
+      "备注": "2026-03-31，day=31 → 命中",
+      "date": "2026-03-31",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {
+            "monthDays": [
+              31
+            ]
+          },
+          "time": {
+            "type": "fixed",
+            "times": [
+              "20:00"
+            ]
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        }
+      ],
+      "expected": [
+        [
+          "a1",
+          0,
+          "2026-03-31",
+          "20:00"
+        ]
+      ],
+      "spanDays": 1
+    },
+    {
+      "name": "每月 1 号和 31 号，查 2 月 1 日 → 命中（不能因为 31 号不存在就整月跳过）",
+      "备注": "day=1 ∈ {1,31} → 命中。这条防「monthDays 里有一个不存在的日期就整月不算」的实现",
+      "date": "2026-02-01",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {
+            "monthDays": [
+              1,
+              31
+            ]
+          },
+          "time": {
+            "type": "fixed",
+            "times": [
+              "20:00"
+            ]
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        }
+      ],
+      "expected": [
+        [
+          "a1",
+          0,
+          "2026-02-01",
+          "20:00"
+        ]
+      ],
+      "spanDays": 1
+    },
+    {
+      "name": "疗程首日",
+      "备注": "courseStart=courseEnd=2026-10-24 → contains 命中",
+      "date": "2026-10-24",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {},
+          "time": {
+            "type": "fixed",
+            "times": [
+              "20:00"
+            ]
+          },
+          "courseStart": "2026-10-24",
+          "courseEnd": "2026-10-24",
+          "courseTotalDays": 1
+        }
+      ],
+      "expected": [
+        [
+          "a1",
+          0,
+          "2026-10-24",
+          "20:00"
+        ]
+      ],
+      "spanDays": 1
+    },
+    {
+      "name": "疗程末日后一天 → 不命中",
+      "备注": "courseEnd=2026-10-23，查 10-24 → 疗程外",
+      "date": "2026-10-24",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {},
+          "time": {
+            "type": "fixed",
+            "times": [
+              "20:00"
+            ]
+          },
+          "courseStart": "2026-10-17",
+          "courseEnd": "2026-10-23",
+          "courseTotalDays": 7
+        }
+      ],
+      "expected": [],
+      "spanDays": 1
+    },
+    {
+      "name": "疗程最后一天 → 命中",
+      "备注": "courseEnd=2026-10-24，查 10-24 → 含两端，命中",
+      "date": "2026-10-24",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {},
+          "time": {
+            "type": "fixed",
+            "times": [
+              "20:00"
+            ]
+          },
+          "courseStart": "2026-10-18",
+          "courseEnd": "2026-10-24",
+          "courseTotalDays": 7
+        }
+      ],
+      "expected": [
+        [
+          "a1",
+          0,
+          "2026-10-24",
+          "20:00"
+        ]
+      ],
+      "spanDays": 1
+    },
+    {
+      "name": "疗程开始前一天 → 不命中",
+      "备注": "courseStart=2026-10-25，查 10-24 → 疗程未开始",
+      "date": "2026-10-24",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {},
+          "time": {
+            "type": "fixed",
+            "times": [
+              "20:00"
+            ]
+          },
+          "courseStart": "2026-10-25",
+          "courseEnd": "2026-10-31",
+          "courseTotalDays": 7
+        }
+      ],
+      "expected": [],
+      "spanDays": 1
+    },
+    {
+      "name": "三个任务同一天，按触发时刻交错排序",
+      "备注": "a1 20:00、a2 07:00、a3 12:30。整体按 dueAt 升序：a2(07:00) → a3(12:30) → a1(20:00)。每个任务自己的 index 都是 0",
+      "date": "2026-10-24",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {},
+          "time": {
+            "type": "fixed",
+            "times": [
+              "20:00"
+            ]
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        },
+        {
+          "id": "a2",
+          "repeat": {},
+          "time": {
+            "type": "fixed",
+            "times": [
+              "07:00"
+            ]
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        },
+        {
+          "id": "a3",
+          "repeat": {},
+          "time": {
+            "type": "fixed",
+            "times": [
+              "12:30"
+            ]
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        }
+      ],
+      "expected": [
+        [
+          "a2",
+          0,
+          "2026-10-24",
+          "07:00"
+        ],
+        [
+          "a3",
+          0,
+          "2026-10-24",
+          "12:30"
+        ],
+        [
+          "a1",
+          0,
+          "2026-10-24",
+          "20:00"
+        ]
+      ],
+      "spanDays": 1
+    },
+    {
+      "name": "两个任务名字相同时刻（taskId 决定先后）",
+      "备注": "a1 和 a2 都是 08:00。排序第二键是 taskId 字符串比较：'a1' < 'a2' → a1 先。⚠️ 这条抓「排序不是全序」：靠 V8 稳定排序「凑巧」也对，但换引擎会乱",
+      "date": "2026-10-24",
+      "tasks": [
+        {
+          "id": "a2",
+          "repeat": {},
+          "time": {
+            "type": "fixed",
+            "times": [
+              "08:00"
+            ]
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        },
+        {
+          "id": "a1",
+          "repeat": {},
+          "time": {
+            "type": "fixed",
+            "times": [
+              "08:00"
+            ]
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        }
+      ],
+      "expected": [
+        [
+          "a1",
+          0,
+          "2026-10-24",
+          "08:00"
+        ],
+        [
+          "a2",
+          0,
+          "2026-10-24",
+          "08:00"
+        ]
+      ],
+      "spanDays": 1
+    },
+    {
+      "name": "跨午夜任务在疗程最后一天，槽位落到疗程外",
+      "备注": "疗程只有 10-24 一天，晚饭后 400 分钟 → 10-25 01:10。槽位的 date 是 10-24（疗程内），dueDate 是 10-25（疗程外）。**这条是故意的**：提醒可以落在疗程后，归属日仍是疗程日",
+      "date": "2026-10-24",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {},
+          "time": {
+            "type": "meal",
+            "anchors": [
+              "dinner"
+            ],
+            "offset": 400
+          },
+          "courseStart": "2026-10-24",
+          "courseEnd": "2026-10-24",
+          "courseTotalDays": 1
+        }
+      ],
+      "expected": [
+        [
+          "a1",
+          0,
+          "2026-10-25",
+          "01:10"
+        ]
+      ],
+      "spanDays": 1
+    },
+    {
+      "name": "规则生效日之前不展开",
+      "备注": "rulesEffectiveFrom=2026-10-25，查 10-24 → 还没生效。这是「改规则不影响历史」的落点",
+      "date": "2026-10-24",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {},
+          "time": {
+            "type": "fixed",
+            "times": [
+              "20:00"
+            ]
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null,
+          "rulesEffectiveFrom": "2026-10-25"
+        }
+      ],
+      "expected": [],
+      "spanDays": 1
+    },
+    {
+      "name": "规则生效日当天开始展开",
+      "备注": "rulesEffectiveFrom=2026-10-24，查 10-24 → 含生效日，命中",
+      "date": "2026-10-24",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {},
+          "time": {
+            "type": "fixed",
+            "times": [
+              "20:00"
+            ]
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null,
+          "rulesEffectiveFrom": "2026-10-24"
+        }
+      ],
+      "expected": [
+        [
+          "a1",
+          0,
+          "2026-10-24",
+          "20:00"
+        ]
+      ],
+      "spanDays": 1
+    },
+    {
+      "name": "暂停的项目不出槽位",
+      "备注": "status=paused → enabled=false",
+      "date": "2026-10-24",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {},
+          "time": {
+            "type": "fixed",
+            "times": [
+              "20:00"
+            ]
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null,
+          "status": "paused"
+        }
+      ],
+      "expected": [],
+      "spanDays": 1
+    },
+    {
+      "name": "已删除（deleted_at_ms 有值但 status 还是 active）",
+      "备注": "删除是「打标记 + 翻状态」两步，中间有一瞬间状态没翻。isLive 必须两个条件都看",
+      "date": "2026-10-24",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {},
+          "time": {
+            "type": "fixed",
+            "times": [
+              "20:00"
+            ]
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null,
+          "status": "active",
+          "deletedAtMs": 1761300000000
+        }
+      ],
+      "expected": [],
+      "spanDays": 1
+    },
+    {
+      "name": "周几 ∩ 单双周交集",
+      "备注": "weekdays=[1,3,5] + parity=evenWeeks。2026-10-23 是周五且 weekIndex=2964 偶 → 命中",
+      "date": "2026-10-23",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {
+            "weekdays": [
+              1,
+              3,
+              5
+            ],
+            "parity": "evenWeeks"
+          },
+          "time": {
+            "type": "fixed",
+            "times": [
+              "20:00"
+            ]
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        }
+      ],
+      "expected": [
+        [
+          "a1",
+          0,
+          "2026-10-23",
+          "20:00"
+        ]
+      ],
+      "spanDays": 1
+    },
+    {
+      "name": "周几 ∩ 单双周交集（周几对上但单双周不对）",
+      "备注": "weekdays=[1,3,5] + parity=oddWeeks。2026-10-23 周五但 weekIndex=2964 偶 → 不命中",
+      "date": "2026-10-23",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {
+            "weekdays": [
+              1,
+              3,
+              5
+            ],
+            "parity": "oddWeeks"
+          },
+          "time": {
+            "type": "fixed",
+            "times": [
+              "20:00"
+            ]
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        }
+      ],
+      "expected": [],
+      "spanDays": 1
+    },
+    {
+      "name": "多天窗口：10-24 到 10-26 每天 20:00",
+      "备注": "spanDays=3，三天各一条，index 每天都是 0。验证 index 按 (taskId, 疗程日) 分组重来",
+      "date": "2026-10-24",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {},
+          "time": {
+            "type": "fixed",
+            "times": [
+              "20:00"
+            ]
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        }
+      ],
+      "expected": [
+        [
+          "a1",
+          0,
+          "2026-10-24",
+          "20:00"
+        ],
+        [
+          "a1",
+          0,
+          "2026-10-25",
+          "20:00"
+        ],
+        [
+          "a1",
+          0,
+          "2026-10-26",
+          "20:00"
+        ]
+      ],
+      "spanDays": 3
+    },
+    {
+      "name": "多天窗口：跨午夜任务在窗口内两天",
+      "备注": "化疗日 10-24 / 10-25 各一次，due 分别落到 10-25 01:10 和 10-26 01:10。index 各自 0",
+      "date": "2026-10-24",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {},
+          "time": {
+            "type": "meal",
+            "anchors": [
+              "dinner"
+            ],
+            "offset": 400
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        }
+      ],
+      "expected": [
+        [
+          "a1",
+          0,
+          "2026-10-25",
+          "01:10"
+        ],
+        [
+          "a1",
+          0,
+          "2026-10-26",
+          "01:10"
+        ]
+      ],
+      "spanDays": 2
+    },
+    {
+      "name": "时间规则为空集合的 fixed → 无槽位（不是每天 00:00）",
+      "备注": "times=[] 在 Dart 里会 assert 失败；网页端 decode 时抛错，被 specsFromTaskRows 收进 broken，不出槽位。这条同时验证「解析失败不猜」",
+      "date": "2026-10-24",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {},
+          "time": {
+            "type": "fixed",
+            "times": []
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        }
+      ],
+      "expected": [],
+      "expectBroken": [
+        "a1"
+      ],
+      "spanDays": 1
+    },
+    {
+      "name": "未知时间规则类型 → 报错进 broken，不静默成每天 20:00",
+      "备注": "type='cron' 是将来可能加的形态。旧版服务端遇到它必须报错，不能猜",
+      "date": "2026-10-24",
+      "tasks": [
+        {
+          "id": "a1",
+          "repeat": {},
+          "time": {
+            "type": "cron",
+            "expr": "* * * * *"
+          },
+          "courseStart": null,
+          "courseEnd": null,
+          "courseTotalDays": null
+        }
+      ],
+      "expected": [],
+      "expectBroken": [
+        "a1"
+      ],
+      "spanDays": 1
+    }
+  ]
+}
